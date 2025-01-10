@@ -12,7 +12,6 @@ setup(
     license='CC BY-NC-SA 4.0',
     packages=find_packages(),
     install_requires=[
-        'matplotlib',
         'numpy',
     ],
     classifiers=[

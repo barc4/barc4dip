@@ -17,6 +17,39 @@ import numpy as np
 from scipy.ndimage import median_filter
 
 # ****************************************************************************
+# ********************** reducing ROI
+# ****************************************************************************
+
+def crop_to_square_center(array, constant=1.0):
+    """
+    Crops a 2D array to a square shape centered at the array's center.
+    The size of the square is constant * min(dimensions of array).
+
+    Parameters:
+        array (np.ndarray): Input 2D array.
+        constant (float): Factor to scale the square's size based on the smallest dimension.
+
+    Returns:
+        np.ndarray: Cropped square array.
+    """
+    min_dim = min(array.shape)
+    square_size = int(min_dim * constant)
+    
+    square_size = min(square_size, min(array.shape))
+    
+    center_y, center_x = np.array(array.shape) // 2
+    
+    half_size = square_size // 2
+    start_y = max(center_y - half_size, 0)
+    end_y = start_y + square_size
+    start_x = max(center_x - half_size, 0)
+    end_x = start_x + square_size
+    
+    # Crop the array
+    cropped_array = array[start_y:end_y, start_x:end_x]
+    return cropped_array
+
+# ****************************************************************************
 # ********************** image conversion
 # ****************************************************************************
 

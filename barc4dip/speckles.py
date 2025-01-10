@@ -1,13 +1,15 @@
 """ 
-Image Quality Ranking Methods
+Speckle Field Metrics
 """
+
 __author__ = ['Rafael Celestre']
 __contact__ = 'rafael.celestre@synchrotron-soleil.fr'
-__license__ = 'GPL-3.0'
+__license__ = 'CC BY-NC-SA 4.0'
 __copyright__ = 'Synchrotron SOLEIL, Saint Aubin, France'
-__created__ = '09/JAN/2025'
-__changed__ = '09/JAN/2025'
+__created__ = '10/JAN/2025'
+__changed__ = '10/JAN/2025'
 
 # ****************************************************************************
 # ********************** speckles
 # ****************************************************************************
+

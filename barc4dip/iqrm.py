@@ -1,52 +1,94 @@
 """ 
 Image Quality Ranking Methods
 """
+
 __author__ = ['Rafael Celestre']
 __contact__ = 'rafael.celestre@synchrotron-soleil.fr'
-__license__ = 'GPL-3.0'
+__license__ = 'CC BY-NC-SA 4.0'
 __copyright__ = 'Synchrotron SOLEIL, Saint Aubin, France'
-__created__ = '09/JAN/2025'
-__changed__ = '09/JAN/2025'
+__created__ = '10/JAN/2025'
+__changed__ = '10/JAN/2025'
 
-from copy import copy
 from typing import Union
 
 import cv2
 import numpy as np
-from scipy.ndimage import median_filter
+from scipy.stats import describe, entropy
+
 
 # ****************************************************************************
-# ********************** image conversion
+# ********************** statistical moments
 # ****************************************************************************
 
-def convert_to_16bit_gray(image: np.ndarray, handle_outliers: bool = True) -> np.ndarray:
+def get_statistical_metrics(image: np.ndarray) -> dict:
     """
-    Convert an image to 16-bit grayscale.
+    Calculate statistical moments and the Shannon entropy for a 16-bit image.
 
     Parameters:
-        image (np.ndarray): Input image as a NumPy array.
-        handle_outliers (bool, optional): If True, apply a median filter to handle outliers before conversion. Default is True.
+        image (np.ndarray): A 16-bit single-channel image.
 
     Returns:
-        np.ndarray: The converted 16-bit grayscale image.
+        dict: A dictionary containing the following statistical moments:
+            - mean: The mean intensity of the image.
+            - variance: The variance of the intensity values.
+            - skewness: The skewness of the intensity distribution.
+            - kurtosis: The kurtosis of the intensity distribution.
+            - entropy: The Shannon entropy of the image.
     """
-    if handle_outliers:
-        bffr = copy(image)
-        bffr = median_filter(image, size=3)
-        imgmin = np.amin(bffr)
-        imgmax = np.amax(bffr)
-    else:
-        imgmin = np.amin(image)
-        imgmax = np.amax(image)
+    mean, variance = describe(image, axis=None)[2:4]
+    skewness = describe(image, axis=None).skewness
+    kurtosis = describe(image, axis=None).kurtosis
+    shannon_entropy = entropy(image, axis=None)
 
-    image = (image - imgmin) / (imgmax - imgmin)
-    clipped_image = np.clip(image, 0, 1)
-    converted_image = (clipped_image * int(65535)).astype(np.uint16)
-    return converted_image
+    return {
+        'mean': mean,
+        'variance': variance,
+        'skewness': skewness,
+        'kurtosis': kurtosis,
+        'entropy': shannon_entropy,
+        'SNRdB': 10*np.log10(mean/variance)
+        }
 
 # ****************************************************************************
 # ********************** sharpness metrics
 # ****************************************************************************
+
+def get_sharpness_metrics(image: np.ndarray, **kwargs) -> dict:
+    """
+    Calculate multiple sharpness metrics for a 16-bit image.
+
+    This function calculates the Brenner gradient, energy of gradients, Fourier sharpness,
+    Laplacian variance, and Tenengrad sharpness for the input image.
+
+    Parameters:
+        image (np.ndarray): A 16-bit single-channel image.
+
+    Returns:
+        dict: A dictionary containing the following sharpness metrics:
+            - brenner_gradient: The Brenner gradient of the image.
+            - energy_of_gradients: The energy of gradients of the image.
+            - fourier_sharpness: The proportion of high-frequency content in the image.
+            - laplacian_variance: The variance of the Laplacian of the image.
+            - tenengrad: The Tenengrad sharpness measure of the image.
+    """
+
+    pixel_shift = kwargs.get('pixel_shift', 3)
+
+    brenner_gradient_h = brenner_gradient_16bit(image, direction='h', pixel_shift=pixel_shift)
+    brenner_gradient_v = brenner_gradient_16bit(image, direction='v', pixel_shift=pixel_shift)
+    energy_of_gradients = energy_of_gradients_16bit(image)
+    fourier_sharpness = fourier_sharpness_16bit(image)
+    laplacian_variance = laplacian_variance_16bit(image)
+    tenengrad = tenengrad_16bit(image)
+
+    return {
+        'brenner_gradient_h': brenner_gradient_h,
+        'brenner_gradient_v': brenner_gradient_v,
+        'energy_of_gradients': energy_of_gradients,
+        'fourier_sharpness': fourier_sharpness,
+        'laplacian_variance': laplacian_variance,
+        'tenengrad': tenengrad
+    }
 
 def brenner_gradient_16bit(image: np.ndarray, direction: Union[int, str], pixel_shift: int = 1) -> int:
     """
@@ -158,7 +200,3 @@ def tenengrad_16bit(image: np.ndarray) -> float:
     sobel_y = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=3)
     gradient_magnitude = sobel_x**2 + sobel_y**2
     return gradient_magnitude.mean()
-
-
-
-

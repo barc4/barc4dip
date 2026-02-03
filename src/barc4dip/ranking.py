@@ -1,5 +1,14 @@
 """ 
 Image Quality Ranking Methods
+
+based on 
+[1] S. Pertuz, D. Puig, and M. A. Garcia, 
+"Analysis of focus measure operators for shape-from-focus," 
+Pattern Recognition 46(5), 1415–1432 (2013). 
+
+[2] S. Koho, E. Fazeli, J. E. Eriksson, and P. E. Hänninen,
+"Image Quality Ranking Method for Microscopy,"
+Sci Rep 6(1), (2016). 
 """
 
 __author__ = ['Rafael Celestre']
@@ -14,6 +23,7 @@ from typing import Union
 import cv2
 import numpy as np
 from scipy.stats import describe, entropy
+
 
 
 # ****************************************************************************

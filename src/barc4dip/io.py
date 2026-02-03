@@ -10,7 +10,7 @@ __created__ = '10/JAN/2025'
 __changed__ = '10/JAN/2025'
 
 import numpy as np
-from barc4dip.iqrm import convert_to_16bit_gray
+from barc4dip.src.barc4dip.ranking import convert_to_16bit_gray
 from PIL import Image
 
 # ****************************************************************************

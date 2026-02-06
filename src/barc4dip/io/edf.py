@@ -14,7 +14,7 @@ import numpy as np
 
 from .uti_EdfFile import EdfFile
 
-def read_edf_image(image_path: str | Sequence[str], *, index: int = 0, 
+def read_edf(image_path: str | Sequence[str], *, index: int = 0, 
                    dtype: np.dtype | str = np.float32,) -> np.ndarray:
     """
     Reads one or multiple EDF images from disk.

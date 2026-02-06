@@ -6,7 +6,7 @@ from importlib.metadata import version as _version
 __version__ = _version("barc4dip")
 
 # Expose modules/packages for debugging (no eager deep imports)
-from . import io
+from .io.rw import read_image, write_image
 from . import utils
 from . import plotting
 
@@ -19,7 +19,8 @@ from . import plotting
 
 __all__ = [
     "__version__",
-    "io",
+    "read_image",
+    "write_image",
     "utils",
     "plotting",
     # "geometry",

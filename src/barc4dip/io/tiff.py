@@ -12,9 +12,9 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
-from barc4dip.utils.dtype import to_uint16
+from ..utils.dtype import to_uint16
 
-def read_tiff_image(image_path: str | Sequence[str]) -> np.ndarray:
+def read_tiff(image_path: str | Sequence[str]) -> np.ndarray:
     """
     Reads one or multiple TIFF images from disk.
 
@@ -68,7 +68,7 @@ def read_tiff_image(image_path: str | Sequence[str]) -> np.ndarray:
     raise TypeError("image_path must be a str or a sequence of str")
         
 
-def save_tiff_image(data: np.ndarray, output_path: str | Path) -> None:
+def save_tiff(data: np.ndarray, output_path: str | Path) -> None:
     """
     Saves a 2D image or a 3D image stack as TIFF(s).
 

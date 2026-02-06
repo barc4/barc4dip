@@ -154,16 +154,6 @@ def uint16_histogram(
     if logy:
         ax.set_yscale("log")
 
-    ax.set_axisbelow(True)
-    ax.grid(
-        True,
-        axis="y",
-        which="both",
-        linestyle=":",
-        linewidth=0.6,
-        alpha=0.6,
-    )
-
     if cumulative:
         ax2 = ax.twinx()
 

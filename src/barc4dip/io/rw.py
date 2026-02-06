@@ -19,36 +19,35 @@ from pathlib import Path
 
 import numpy as np
 
-from .edf import read_edf_image
-from .h5 import read_h5_image, save_h5_image
-from .tiff import read_tiff_image, save_tiff_image
+from ..utils import elapsed_time, now
+from .edf import read_edf
+from .h5 import read_h5, save_h5
+from .tiff import read_tiff, save_tiff
 
-
-_READ_EXTS: dict[str, str] = {
-    "tiff": "tiff",
+_READ_EXTS = {
     "tif": "tiff",
+    "tiff": "tiff",
     "edf": "edf",
     "h5": "h5",
     "hdf5": "h5",
 }
 
-_WRITE_EXTS: dict[str, str] = {
-    "tiff": "tiff",
+_WRITE_EXTS = {
     "tif": "tiff",
+    "tiff": "tiff",
     "h5": "h5",
     "hdf5": "h5",
-    "edf": "edf",
+    "edf": "edf",  # explicitly blocked
 }
+
 
 def _normalize_extension(ext: str) -> str:
-    e = ext.strip().lower()
-    if e.startswith("."):
-        e = e[1:]
-    return e
+    ext = ext.lower().lstrip(".")
+    return ext
 
 
 def _infer_extension_from_path(path: str) -> str:
-    suffix = Path(path).suffix.lower()
+    suffix = Path(path).suffix
     if suffix == "":
         raise ValueError(
             "Cannot infer file extension from path (no suffix). "
@@ -58,58 +57,40 @@ def _infer_extension_from_path(path: str) -> str:
 
 
 def _infer_extension_from_paths(paths: Sequence[str]) -> str:
-    exts = []
-    for p in paths:
-        if not isinstance(p, str):
-            raise TypeError("All elements of image_path must be strings")
-        exts.append(_infer_extension_from_path(p))
-
+    exts = [_infer_extension_from_path(p) for p in paths]
     first = exts[0]
     if any(e != first for e in exts):
         raise ValueError(f"Mixed file extensions in image_path sequence: {sorted(set(exts))}")
     return first
 
 
-def read_image(image_path: str | Sequence[str], *, file_extension: str | None = None) -> np.ndarray:
+def read_image(image_path: str | Sequence[str], *, file_extension: str | None = None,
+               verbose: bool = False,) -> np.ndarray:
     """
     Reads one image or a stack of images from disk.
-
-    The reader is selected based on the file extension, either:
-        - explicitly via file_extension, or
-        - inferred from the path suffix.
-
-    Supported read formats:
-        - TIFF: .tif, .tiff
-        - EDF:  .edf
-        - HDF5: .h5, .hdf5
 
     Parameters:
         image_path (str | Sequence[str]):
             Path to a file, or a sequence of file paths.
-            If a sequence is provided, the underlying format reader stacks or
-            concatenates frames along axis 0.
         file_extension (str | None):
-            Optional override for the file extension (e.g. "tif", "edf", "h5").
-            If None, the extension is inferred from image_path.
+            Optional extension override ("tif", "edf", "h5", ...).
+        verbose (bool):
+            If True, prints basic information about the loaded data.
 
     Returns:
         np.ndarray:
-            2D or 3D array depending on input and file content.
+            2D or 3D image array.
 
     Raises:
-        TypeError:
-            If image_path is not a str or a sequence of str.
-        ValueError:
-            If the sequence is empty, if extensions are mixed, if the extension
-            cannot be inferred, or if the extension is not supported.
+        TypeError, ValueError
     """
-
+    t0 = now()
     if isinstance(image_path, str):
-        ext = _normalize_extension(file_extension) if file_extension is not None else _infer_extension_from_path(image_path)
+        ext = _normalize_extension(file_extension) if file_extension else _infer_extension_from_path(image_path)
     elif isinstance(image_path, Sequence):
         if len(image_path) == 0:
             raise ValueError("image_path sequence is empty")
-        ext = _normalize_extension(file_extension) if file_extension is not None else _infer_extension_from_paths(image_path)
+        ext = _normalize_extension(file_extension) if file_extension else _infer_extension_from_paths(image_path)
     else:
         raise TypeError("image_path must be a str or a sequence of str")
 
@@ -118,30 +99,32 @@ def read_image(image_path: str | Sequence[str], *, file_extension: str | None = 
         raise ValueError(f"Unsupported read extension: '{ext}'")
 
     if kind == "tiff":
-        return read_tiff_image(image_path)
-    if kind == "edf":
-        return read_edf_image(image_path)
-    if kind == "h5":
-        return read_h5_image(image_path)
+        data = read_tiff(image_path)
+    elif kind == "edf":
+        data = read_edf(image_path)
+    elif kind == "h5":
+        data = read_h5(image_path)
+    else:
+        raise RuntimeError(f"Unhandled reader kind: {kind}")
 
-    # Should never happen
-    raise RuntimeError(f"Unhandled reader kind: {kind}")
+    if verbose:
+        if data.ndim == 2:
+            n_img = 1
+            h, w = data.shape
+        else:
+            n_img, h, w = data.shape
+
+        mem_gb = data.nbytes / (1024 ** 3)
+        print(f"> {n_img} image(s) found ({h} x {w}), {mem_gb:.2f} Gb in memory")
+        elapsed_time(t0)
+
+    return data
 
 
 def write_image(data: np.ndarray, output_path: str | Path, *, 
-                file_extension: str | None = None, ) -> None:
+                file_extension: str | None = None, verbose: bool = False, ) -> None:
     """
     Writes an image or image stack to disk.
-
-    The writer is selected based on the file extension, either:
-        - explicitly via file_extension, or
-        - inferred from output_path suffix.
-
-    Supported write formats:
-        - TIFF: .tif, .tiff
-        - HDF5: .h5, .hdf5
-
-    EDF writing is not supported and raises an error.
 
     Parameters:
         data (np.ndarray):
@@ -149,30 +132,23 @@ def write_image(data: np.ndarray, output_path: str | Path, *,
         output_path (str | Path):
             Output file path.
         file_extension (str | None):
-            Optional override for the file extension (e.g. "tif", "h5").
-            If None, the extension is inferred from output_path.
+            Optional extension override ("tif", "h5", ...).
+        verbose (bool):
+            If True, prints a confirmation message after writing.
 
     Returns:
         None
 
     Raises:
-        TypeError:
-            If data is not a numpy array.
-        ValueError:
-            If the extension cannot be inferred, if the extension is not supported,
-            or if an EDF write is requested.
-        OSError:
-            If the destination path does not exist, is not writable,
-            or the underlying writer fails.
+        TypeError, ValueError, OSError
     """
-
     if not isinstance(data, np.ndarray):
         raise TypeError("data must be a numpy.ndarray")
 
     out = Path(output_path)
-
-    ext = _normalize_extension(file_extension) if file_extension is not None else _infer_extension_from_path(str(out))
+    ext = _normalize_extension(file_extension) if file_extension else _infer_extension_from_path(str(out))
     kind = _WRITE_EXTS.get(ext)
+
     if kind is None:
         raise ValueError(f"Unsupported write extension: '{ext}'")
 
@@ -180,11 +156,11 @@ def write_image(data: np.ndarray, output_path: str | Path, *,
         raise ValueError("Writing EDF is not supported (legacy read-only format).")
 
     if kind == "tiff":
-        save_tiff_image(data, out)
-        return
+        save_tiff(data, out)
+    elif kind == "h5":
+        save_h5(data, out)
+    else:
+        raise RuntimeError(f"Unhandled writer kind: {kind}")
 
-    if kind == "h5":
-        save_h5_image(data, out)
-        return
-
-    raise RuntimeError(f"Unhandled writer kind: {kind}")
+    if verbose:
+        print(f"Data written successfully to '{out}'")

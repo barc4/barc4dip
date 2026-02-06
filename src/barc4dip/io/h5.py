@@ -14,7 +14,7 @@ import numpy as np
 import h5py
 
 
-def read_h5_image(image_path: str | Sequence[str]) -> np.ndarray:
+def read_h5(image_path: str | Sequence[str]) -> np.ndarray:
     """
     Reads one or multiple HDF5 images from disk.
 
@@ -108,7 +108,7 @@ def read_h5_image(image_path: str | Sequence[str]) -> np.ndarray:
 
     raise TypeError("image_path must be a str or a sequence of str")
 
-def save_h5_image(data: np.ndarray, output_path: str | Path) -> None:
+def save_h5(data: np.ndarray, output_path: str | Path) -> None:
     """
     Saves a 2D image or a 3D image stack to a single HDF5 file.
 

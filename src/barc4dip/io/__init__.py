@@ -3,8 +3,13 @@
 
 from __future__ import annotations
 
-from . import tiff
-from . import edf
-from . import h5
+from . import edf, h5, tiff
+from .rw import read_image, write_image
 
-__all__ = ["tiff", "edf", "h5"]
+__all__ = [
+    "edf",
+    "h5",
+    "tiff",
+    "read_image",
+    "write_image",
+]

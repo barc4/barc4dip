@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import numpy as np
 
+
 def width_at_fraction(
     profile: np.ndarray,
     *,

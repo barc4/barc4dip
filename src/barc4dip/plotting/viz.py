@@ -12,6 +12,7 @@ import numpy as np
 
 from .style import igor_cmap, srw_cmap, start_plotting
 
+
 def uint16_image(
     img: np.ndarray,
     title: str = None,
@@ -89,6 +90,7 @@ def uint16_image(
     plt.colorbar(im, ax=ax, fraction=0.046 * im_ratio, pad=0.04)
 
     plt.show()
+
 
 def uint16_histogram(
     img: np.ndarray,

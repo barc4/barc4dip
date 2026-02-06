@@ -11,7 +11,6 @@ This module provides:
 EDF writing is intentionally not supported (legacy read-only format).
 """
 
-
 from __future__ import annotations
 
 from collections.abc import Sequence

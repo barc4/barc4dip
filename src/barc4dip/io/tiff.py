@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image
 from ..utils.dtype import to_uint16
 
+
 def read_tiff(image_path: str | Sequence[str]) -> np.ndarray:
     """
     Reads one or multiple TIFF images from disk.

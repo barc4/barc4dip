@@ -1,18 +1,28 @@
 # SPDX-License-Identifier: CECILL-2.1
-# Copyright (c) 2026
+# Copyright (c) 2026 ESRF - the European Synchrotron
 
 """
-FFT-based correlation helpers.
+FFT-based correlation helpers (pixel-first).
 
 Conventions:
 - 2D arrays use NumPy shape (ny, nx) and axes (y, x).
 - Correlation is computed via FFT and is therefore circular (wrap-around).
 - Returned correlations are shifted (zero-lag at the center) via fftshift().
-- Lag axes (xlag, ylag) are returned in the same units as x/y.
+
+Units:
+- If called with no calibration, dx=dy=1 and lag axes are in pixels.
+- If dx/dy are provided, lag axes are in those physical units.
+- If x/y are provided, dx/dy are inferred from the axes (uniform sampling required).
+
+Calibration rules:
+- Provide either:
+    - dx (and dy for 2D), OR
+    - x (and y for 2D).
+- If x is provided, dx must remain default (1.0). Same for y/dy.
 
 Normalization:
 - normalize="none": raw circular correlation (shifted).
-- normalize="peak": divides by the maximum absolute correlation value (shifted), so peak is 1.
+- normalize="peak": divides by the maximum absolute value (shifted), so peak is 1.
 
 Notes:
 - remove_mean=True is a good default for texture/speckle work (avoids DC pedestal).
@@ -25,39 +35,7 @@ from typing import Literal
 
 import numpy as np
 
-
-def _uniform_step(axis: np.ndarray, name: str) -> float:
-    a = np.asarray(axis, dtype=float)
-    if a.ndim != 1 or a.size < 2:
-        raise ValueError(f"{name} must be a 1D array with at least 2 samples.")
-
-    d = np.diff(a)
-    if not np.all(np.isfinite(d)):
-        raise ValueError(f"{name} contains non-finite values.")
-
-    # Strict monotonicity (either increasing or decreasing).
-    if not (np.all(d > 0) or np.all(d < 0)):
-        raise ValueError(f"{name} must be strictly monotonic (uniform sampling assumed).")
-
-    d_abs = np.abs(d)
-    step = float(np.median(d_abs))
-    if step <= 0:
-        raise ValueError(f"{name} has non-positive sampling step.")
-
-    rel = float(np.max(np.abs(d_abs - step)) / step)
-    if rel > 1e-6:
-        raise ValueError(
-            f"{name} appears non-uniform (max relative deviation {rel:.2e}). "
-            "Provide uniformly sampled axes."
-        )
-
-    return step
-
-
-def _lag_axis(axis: np.ndarray, name: str) -> np.ndarray:
-    step = _uniform_step(axis, name)
-    n = int(np.asarray(axis).size)
-    return (np.arange(n, dtype=float) - (n // 2)) * step
+from .common import _lag_axis_from_step, _resolve_step_1d, _resolve_steps_2d
 
 
 def _as_real_if_close(z: np.ndarray) -> np.ndarray:
@@ -68,7 +46,8 @@ def xcorr1d(
     a: np.ndarray,
     b: np.ndarray,
     *,
-    x: np.ndarray,
+    x: np.ndarray | None = None,
+    dx: float = 1.0,
     remove_mean: bool = True,
     standardize: bool = False,
     normalize: Literal["none", "peak"] = "peak",
@@ -81,19 +60,21 @@ def xcorr1d(
             1D signal A (length n).
         b (np.ndarray):
             1D signal B (length n).
-        x (np.ndarray):
-            1D coordinate axis (length n), uniformly sampled.
+        x (np.ndarray | None):
+            Optional 1D coordinate axis (length n), uniformly sampled.
+        dx (float):
+            Sample spacing (default: 1.0). Used only if x is None.
         remove_mean (bool):
-            If True, subtracts mean from each signal before correlation.
+            If True, subtracts mean from each signal before correlation (default: True).
         standardize (bool):
-            If True, divides each (optionally de-meaned) signal by its standard deviation.
+            If True, divides each (optionally de-meaned) signal by its standard deviation (default: False).
         normalize (str):
-            "none" or "peak".
+            "none" or "peak" (default: "peak").
 
     Returns:
         tuple[np.ndarray, np.ndarray]:
             - corr (np.ndarray): shifted circular cross-correlation (length n).
-            - xlag (np.ndarray): lag axis (length n), same units as x.
+            - xlag (np.ndarray): lag axis (length n), in pixels or physical units.
 
     Raises:
         ValueError
@@ -104,10 +85,10 @@ def xcorr1d(
         raise ValueError("a and b must be 1D arrays.")
     if aa.size != bb.size:
         raise ValueError("a and b must have the same length.")
-    if aa.size != np.asarray(x).size:
-        raise ValueError("a/b length must match x.size.")
 
-    xlag = _lag_axis(x, "x")
+    n = int(aa.size)
+    step = _resolve_step_1d(n=n, x=x, dx=dx, name="x")
+    xlag = _lag_axis_from_step(n, step)
 
     if remove_mean:
         aa = aa - float(np.mean(aa))
@@ -143,7 +124,8 @@ def xcorr1d(
 def autocorr1d(
     a: np.ndarray,
     *,
-    x: np.ndarray,
+    x: np.ndarray | None = None,
+    dx: float = 1.0,
     remove_mean: bool = True,
     standardize: bool = False,
     normalize: Literal["none", "peak"] = "peak",
@@ -154,19 +136,21 @@ def autocorr1d(
     Parameters:
         a (np.ndarray):
             1D signal (length n).
-        x (np.ndarray):
-            1D coordinate axis (length n), uniformly sampled.
+        x (np.ndarray | None):
+            Optional 1D coordinate axis (length n), uniformly sampled.
+        dx (float):
+            Sample spacing (default: 1.0). Used only if x is None.
         remove_mean (bool):
-            If True, subtracts mean before correlation.
+            If True, subtracts mean before correlation (default: True).
         standardize (bool):
-            If True, divides (optionally de-meaned) signal by its standard deviation.
+            If True, divides (optionally de-meaned) signal by its standard deviation (default: False).
         normalize (str):
-            "none" or "peak".
+            "none" or "peak" (default: "peak").
 
     Returns:
         tuple[np.ndarray, np.ndarray]:
             - corr (np.ndarray): shifted circular auto-correlation (length n).
-            - xlag (np.ndarray): lag axis (length n), same units as x.
+            - xlag (np.ndarray): lag axis (length n), in pixels or physical units.
 
     Raises:
         ValueError
@@ -175,6 +159,7 @@ def autocorr1d(
         a,
         a,
         x=x,
+        dx=dx,
         remove_mean=remove_mean,
         standardize=standardize,
         normalize=normalize,
@@ -185,8 +170,10 @@ def xcorr2d(
     a: np.ndarray,
     b: np.ndarray,
     *,
-    x: np.ndarray,
-    y: np.ndarray,
+    x: np.ndarray | None = None,
+    y: np.ndarray | None = None,
+    dx: float = 1.0,
+    dy: float = 1.0,
     remove_mean: bool = True,
     standardize: bool = False,
     normalize: Literal["none", "peak"] = "peak",
@@ -199,22 +186,26 @@ def xcorr2d(
             2D signal A with shape (ny, nx).
         b (np.ndarray):
             2D signal B with shape (ny, nx).
-        x (np.ndarray):
-            1D x-axis coordinates (length nx), uniformly sampled.
-        y (np.ndarray):
-            1D y-axis coordinates (length ny), uniformly sampled.
+        x (np.ndarray | None):
+            Optional 1D x-axis (length nx), uniformly sampled.
+        y (np.ndarray | None):
+            Optional 1D y-axis (length ny), uniformly sampled.
+        dx (float):
+            Pixel size in x (default: 1.0). Used only if x/y are None.
+        dy (float):
+            Pixel size in y (default: 1.0). Used only if x/y are None.
         remove_mean (bool):
-            If True, subtracts mean from each signal before correlation.
+            If True, subtracts mean from each signal before correlation (default: True).
         standardize (bool):
-            If True, divides each (optionally de-meaned) signal by its standard deviation.
+            If True, divides each (optionally de-meaned) signal by its standard deviation (default: False).
         normalize (str):
-            "none" or "peak".
+            "none" or "peak" (default: "peak").
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray]:
             - corr (np.ndarray): shifted circular cross-correlation with shape (ny, nx).
-            - xlag (np.ndarray): lag axis (length nx), same units as x.
-            - ylag (np.ndarray): lag axis (length ny), same units as y.
+            - xlag (np.ndarray): lag axis (length nx), in pixels or physical units.
+            - ylag (np.ndarray): lag axis (length ny), in pixels or physical units.
 
     Raises:
         ValueError
@@ -227,11 +218,9 @@ def xcorr2d(
         raise ValueError("a and b must have the same shape.")
 
     ny, nx = aa.shape
-    if nx != np.asarray(x).size or ny != np.asarray(y).size:
-        raise ValueError("a/b shape must match (y.size, x.size).")
-
-    xlag = _lag_axis(x, "x")
-    ylag = _lag_axis(y, "y")
+    step_x, step_y = _resolve_steps_2d(shape=(ny, nx), x=x, y=y, dx=dx, dy=dy)
+    xlag = _lag_axis_from_step(nx, step_x)
+    ylag = _lag_axis_from_step(ny, step_y)
 
     if remove_mean:
         aa = aa - float(np.mean(aa))
@@ -267,8 +256,10 @@ def xcorr2d(
 def autocorr2d(
     a: np.ndarray,
     *,
-    x: np.ndarray,
-    y: np.ndarray,
+    x: np.ndarray | None = None,
+    y: np.ndarray | None = None,
+    dx: float = 1.0,
+    dy: float = 1.0,
     remove_mean: bool = True,
     standardize: bool = False,
     normalize: Literal["none", "peak"] = "peak",
@@ -279,22 +270,26 @@ def autocorr2d(
     Parameters:
         a (np.ndarray):
             2D signal with shape (ny, nx).
-        x (np.ndarray):
-            1D x-axis coordinates (length nx), uniformly sampled.
-        y (np.ndarray):
-            1D y-axis coordinates (length ny), uniformly sampled.
+        x (np.ndarray | None):
+            Optional 1D x-axis (length nx), uniformly sampled.
+        y (np.ndarray | None):
+            Optional 1D y-axis (length ny), uniformly sampled.
+        dx (float):
+            Pixel size in x (default: 1.0). Used only if x/y are None.
+        dy (float):
+            Pixel size in y (default: 1.0). Used only if x/y are None.
         remove_mean (bool):
-            If True, subtracts mean before correlation.
+            If True, subtracts mean before correlation (default: True).
         standardize (bool):
-            If True, divides (optionally de-meaned) signal by its standard deviation.
+            If True, divides (optionally de-meaned) signal by its standard deviation (default: False).
         normalize (str):
-            "none" or "peak".
+            "none" or "peak" (default: "peak").
 
     Returns:
         tuple[np.ndarray, np.ndarray, np.ndarray]:
             - corr (np.ndarray): shifted circular auto-correlation with shape (ny, nx).
-            - xlag (np.ndarray): lag axis (length nx), same units as x.
-            - ylag (np.ndarray): lag axis (length ny), same units as y.
+            - xlag (np.ndarray): lag axis (length nx), in pixels or physical units.
+            - ylag (np.ndarray): lag axis (length ny), in pixels or physical units.
 
     Raises:
         ValueError
@@ -304,6 +299,8 @@ def autocorr2d(
         a,
         x=x,
         y=y,
+        dx=dx,
+        dy=dy,
         remove_mean=remove_mean,
         standardize=standardize,
         normalize=normalize,

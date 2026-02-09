@@ -2,7 +2,7 @@
 # Copyright (c) 2026 ESRF - the European Synchrotron
 
 """
-Radial/azimuthal reductions.
+Radial reductions (pixel domain).
 
 This module provides two radial-average estimators:
 
@@ -14,10 +14,12 @@ This module provides two radial-average estimators:
     High-definition polar sampling with interpolation.
     Preferred for smooth diagnostic curves and theory comparisons.
 
-Both functions assume:
-    - x and y are 1D coordinate axes (pixel centers or physical units),
-    - x and y are centered at 0,
-    - the radial mean is computed around the origin (0, 0).
+Conventions:
+- Inputs are plain NumPy arrays.
+- All distances are returned in pixels.
+- The origin is the array center as defined by pixel-center coordinates:
+    x = arange(nx) - nx//2
+    y = arange(ny) - ny//2
 """
 
 from __future__ import annotations
@@ -26,34 +28,34 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 
+def _pixel_axes(shape: tuple[int, int]) -> tuple[np.ndarray, np.ndarray]:
+    ny, nx = shape
+    x = np.arange(nx, dtype=float) - (nx // 2)
+    y = np.arange(ny, dtype=float) - (ny // 2)
+    return x, y
+
+
 def radial_mean_binned(
     signal_2d: np.ndarray,
-    x: np.ndarray,
-    y: np.ndarray,
     *,
     r_max: float | None = None,
-    bin_size: float | None = None,
+    bin_size: float = 1.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Radial mean of a 2D signal using annular binning (no interpolation).
 
     Parameters:
         signal_2d (np.ndarray):
-            2D signal to radially average with shape (ny, nx).
-        x (np.ndarray):
-            1D x-axis coordinates (length nx), centered at 0.
-        y (np.ndarray):
-            1D y-axis coordinates (length ny), centered at 0.
+            2D signal to radially average.
         r_max (float | None):
-            Maximum radius. If None, uses the inscribed circle:
-            min(max(|x|), max(|y|)).
-        bin_size (float | None):
-            Radial bin size. If None, uses min(|dx|, |dy|) inferred from x/y.
+            Maximum radius in pixels. If None, uses the inscribed circle radius in pixels.
+        bin_size (float):
+            Radial bin size in pixels (default: 1.0).
 
     Returns:
         tuple[np.ndarray, np.ndarray]:
             - radial (np.ndarray): radial mean values per bin.
-            - r (np.ndarray): radius values at bin centers (same units as x/y).
+            - r (np.ndarray): radius values at bin centers (pixels).
 
     Raises:
         ValueError
@@ -61,27 +63,19 @@ def radial_mean_binned(
     z = np.asarray(signal_2d, dtype=float)
     if z.ndim != 2:
         raise ValueError("signal_2d must be a 2D array.")
-
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-    if x.ndim != 1 or y.ndim != 1:
-        raise ValueError("x and y must be 1D arrays.")
-    if z.shape != (y.size, x.size):
-        raise ValueError(
-            f"signal_2d shape must match (y.size, x.size) = {(y.size, x.size)}, got {z.shape}."
-        )
-
-    if r_max is None:
-        r_max = min(float(np.max(np.abs(x))), float(np.max(np.abs(y))))
-    if r_max <= 0:
-        raise ValueError("r_max must be > 0 (or leave it as None with valid x/y).")
-
-    if bin_size is None:
-        dx = float(np.median(np.abs(np.diff(x)))) if x.size > 1 else 1.0
-        dy = float(np.median(np.abs(np.diff(y)))) if y.size > 1 else 1.0
-        bin_size = float(min(dx, dy))
+    if not np.isfinite(z).all():
+        raise ValueError("signal_2d contains non-finite values.")
     if bin_size <= 0:
         raise ValueError("bin_size must be > 0.")
+
+    ny, nx = z.shape
+    x, y = _pixel_axes((ny, nx))
+
+    if r_max is None:
+        # Inscribed circle radius around the origin in pixel-center coordinates.
+        r_max = min(float(np.max(np.abs(x))), float(np.max(np.abs(y))))
+    if r_max <= 0:
+        raise ValueError("r_max must be > 0 (or leave it as None with valid shape).")
 
     Y, X = np.meshgrid(y, x, indexing="ij")
     R = np.sqrt(X * X + Y * Y)
@@ -100,14 +94,12 @@ def radial_mean_binned(
     valid = counts > 0
     radial[valid] = sums[valid] / counts[valid]
 
-    r = (np.arange(nbins, dtype=float) + 0.5) * bin_size
+    r = (np.arange(nbins, dtype=float) + 0.5) * float(bin_size)
     return radial, r
 
 
 def radial_mean_interpolated(
     signal_2d: np.ndarray,
-    x: np.ndarray,
-    y: np.ndarray,
     *,
     r_max: float | None = None,
     nr: int | None = None,
@@ -119,16 +111,11 @@ def radial_mean_interpolated(
 
     Parameters:
         signal_2d (np.ndarray):
-            2D signal to radially average with shape (ny, nx).
-        x (np.ndarray):
-            1D x-axis coordinates (length nx), centered at 0.
-        y (np.ndarray):
-            1D y-axis coordinates (length ny), centered at 0.
+            2D signal to radially average.
         r_max (float | None):
-            Maximum radius. If None, uses the inscribed circle:
-            min(max(|x|), max(|y|)).
+            Maximum radius in pixels. If None, uses the inscribed circle radius in pixels.
         nr (int | None):
-            Number of radial samples. If None, uses nx//2.
+            Number of radial samples. If None, uses floor(r_max) + 1.
         ntheta (int | None):
             Number of angular samples. If None, uses ~1 degree sampling.
         fill_value (float):
@@ -137,7 +124,7 @@ def radial_mean_interpolated(
     Returns:
         tuple[np.ndarray, np.ndarray]:
             - radial (np.ndarray): radially averaged values.
-            - r (np.ndarray): radial distances (same units as x/y).
+            - r (np.ndarray): radial distances (pixels).
 
     Raises:
         ValueError
@@ -145,24 +132,19 @@ def radial_mean_interpolated(
     z = np.asarray(signal_2d, dtype=float)
     if z.ndim != 2:
         raise ValueError("signal_2d must be a 2D array.")
+    if not np.isfinite(z).all():
+        raise ValueError("signal_2d contains non-finite values.")
 
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-    if x.ndim != 1 or y.ndim != 1:
-        raise ValueError("x and y must be 1D arrays.")
-    if z.shape != (y.size, x.size):
-        raise ValueError(
-            f"signal_2d shape must match (y.size, x.size) = {(y.size, x.size)}, got {z.shape}."
-        )
+    ny, nx = z.shape
+    x, y = _pixel_axes((ny, nx))
 
     if r_max is None:
         r_max = min(float(np.max(np.abs(x))), float(np.max(np.abs(y))))
     if r_max <= 0:
-        raise ValueError("r_max must be > 0 (or leave it as None with valid x/y).")
+        raise ValueError("r_max must be > 0 (or leave it as None with valid shape).")
 
-    ny, nx = z.shape
     if nr is None:
-        nr = int(nx * 0.5)
+        nr = int(np.floor(r_max)) + 1
     if ntheta is None:
         ntheta = int(2.0 * np.pi * 180.0)  # ~1 degree sampling
 

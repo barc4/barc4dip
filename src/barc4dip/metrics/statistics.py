@@ -7,36 +7,44 @@ Statistical metrics.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from scipy.stats import describe
+
+logger = logging.getLogger(__name__)
 
 def distribution_moments(
     image: np.ndarray,
     *,
     saturation_value: float | None = 65535.0,
     eps: float = 1e-6,
+    verbose: bool = False,
 ) -> dict[str, float]:
     """
     Compute basic intensity distribution moments and simple diagnostics.
 
-    This function operates on real-valued images (typically floats) and assumes
+    This function operates on real-valued data (typically floats) and assumes
     scaling and dtype conversion are handled elsewhere in the pipeline.
 
     Parameters:
         image (np.ndarray):
-            2D image (or any-shape array). Values are treated as a flat sample
-            of intensities.
+            1D or 2D array of intensities. Values are flattened and treated as
+            an i.i.d. sample (finite values only).
         saturation_value (float | None):
             Reference saturation level. If None, frac_sat is set to NaN
             (default: 65535.0).
         eps (float):
-            Tolerance used to detect zero-valued pixels. Pixels with
+            Tolerance used to detect (near-)zero-valued pixels. Pixels with
             |value| <= eps are counted as zero (default: 1e-6).
+        verbose (bool):
+            If True, emit a concise, human-readable summary via the logging
+            subsystem at INFO level. Default is False.
 
     Returns:
         dict[str, float]:
             Dictionary with keys:
-                - mean: Mean intensity.
+                - mean: Mean intensity (finite values only).
                 - variance: Intensity variance.
                 - skewness: Skewness of the intensity distribution.
                 - kurtosis: Kurtosis of the intensity distribution.
@@ -47,12 +55,16 @@ def distribution_moments(
 
     Raises:
         ValueError:
-            If the image is empty or contains no finite values.
+            If image is empty, has ndim not in {1, 2}, or contains no finite values.
     """
-    if image.size == 0:
+    data = np.asarray(image)
+    if data.ndim not in (1, 2):
+        raise ValueError(f"Expected 1D or 2D array, got ndim={image.ndim}")
+
+    if data.size == 0:
         raise ValueError("distribution_moments received an empty image.")
 
-    x = np.asarray(image, dtype=np.float64).ravel()
+    x = np.asarray(data, dtype=np.float64).ravel()
     finite = np.isfinite(x)
 
     if not np.any(finite):
@@ -84,7 +96,7 @@ def distribution_moments(
     else:
         frac_sat = float(np.mean(x >= float(saturation_value)))
 
-    return {
+    moments = {
         "mean": mean,
         "variance": variance,
         "skewness": skewness,
@@ -93,4 +105,19 @@ def distribution_moments(
         "frac_sat": frac_sat,
         "SNRdB": snr_db,
     }
+
+    if verbose:
+        std = float(np.sqrt(variance)) if variance >= 0.0 else float("nan")
+        logger.info(
+            "> moments: mean=%.0f | std=%.0f | skew=%.2f | kurt=%.2f | SNR=%.2f dB | zero=%.6f | sat=%.6f",
+            moments["mean"],
+            std,
+            moments["skewness"],
+            moments["kurtosis"],
+            moments["SNRdB"],
+            moments["frac_zero"],
+            moments["frac_sat"],
+        )
+        
+    return moments
 

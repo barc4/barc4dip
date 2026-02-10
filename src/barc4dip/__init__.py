@@ -8,6 +8,7 @@ __version__ = _version("barc4dip")
 # Expose modules/packages for debugging (no eager deep imports)
 from .io import read_image, write_image
 from .preprocessing import flat_field_correction
+from . import metrics
 from . import utils
 from . import plotting
 
@@ -27,7 +28,7 @@ __all__ = [
     "plotting",
     # "geometry",
     # "preprocess",
-    # "metrics",
+    "metrics",
     # "signal",
     # "math",
 ]

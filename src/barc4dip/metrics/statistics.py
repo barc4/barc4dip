@@ -20,7 +20,7 @@ def distribution_moments(
     saturation_value: float | None = 65535.0,
     eps: float = 1e-6,
     verbose: bool = False,
-) -> dict[str, float]:
+) -> dict:
     """
     Compute basic intensity distribution moments and simple diagnostics.
 
@@ -42,16 +42,15 @@ def distribution_moments(
             subsystem at INFO level. Default is False.
 
     Returns:
-        dict[str, float]:
-            Dictionary with keys:
-                - mean: Mean intensity (finite values only).
-                - variance: Intensity variance.
-                - skewness: Skewness of the intensity distribution.
-                - kurtosis: Kurtosis of the intensity distribution.
-                - frac_zero: Fraction of finite pixels with |value| <= eps.
-                - frac_sat: Fraction of finite pixels >= saturation_value,
-                  or NaN if saturation_value is None.
-                - SNRdB: Signal-to-noise proxy defined as 20*log10(mean / std).
+        Dictionary with keys:
+            - mean: Mean intensity (finite values only).
+            - variance: Intensity variance.
+            - skewness: Skewness of the intensity distribution.
+            - kurtosis: Kurtosis of the intensity distribution.
+            - frac_zero: Fraction of finite pixels with |value| <= eps.
+            - frac_sat: Fraction of finite pixels >= saturation_value,
+                or NaN if saturation_value is None.
+            - SNRdB: Signal-to-noise proxy defined as 20*log10(mean / std).
 
     Raises:
         ValueError:
@@ -118,6 +117,6 @@ def distribution_moments(
             moments["frac_zero"],
             moments["frac_sat"],
         )
-        
+
     return moments
 

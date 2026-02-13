@@ -6,75 +6,70 @@ speckle field metrics
 """
 from __future__ import annotations
 
-from typing import Literal, Sequence
-
+import logging
 import warnings
+from typing import Literal, Sequence
 
 import numpy as np
 
-from barc4dip.metrics.statistics import distribution_moments
-
 from barc4dip.maths.radial import radial_mean_binned, radial_mean_interpolated
 from barc4dip.maths.stats import distance_at_fraction_from_peak, width_at_fraction
-from barc4dip.signal.fft import psd2d
+from barc4dip.metrics.statistics import distribution_moments
 from barc4dip.signal.corr import autocorr2d
+from barc4dip.signal.fft import psd2d
 from barc4dip.utils.range import percentile_minmax_range
 
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Grain
+# ---------------------------------------------------------------------------
 
 def grain(
     image: np.ndarray,
     *,
-    remove_mean: bool = True,
-    standardize: bool = False,
     fraction: float = 1.0 / np.e,
-    radial_method: Literal["binned", "interpolated"] = "binned",
-    return_autocorr: bool = False,
-) -> dict[str, float] | tuple[dict[str, float], dict[str, np.ndarray]]:
+    radial_method: Literal["binned", "interpolated"] = "interpolated",
+    verbose: bool = False,
+) -> dict:
     """
-    Compute speckle grain metrics from the autocorrelation peak (pixels only).
+    Compute speckle grain metrics from the autocorrelation peak.
 
     Parameters:
         image (np.ndarray):
-            2D speckle intensity image. Crop the ROI before calling.
-        remove_mean (bool):
-            If True, subtracts the patch mean before autocorrelation (default: True).
-        standardize (bool):
-            If True, computes correlation on (I - mean) / std (default: False).
+            2D speckle intensity image.
         fraction (float):
             Threshold fraction for widths/radius (default: 1/e).
         radial_method (Literal["binned", "interpolated"]):
-            Radial averaging method for leq (default: "binned").
-        return_autocorr (bool):
-            If True, also returns an autocorrelation dictionary with pixel lag axes (default: False).
-
+            Radial averaging method for leq (default: "interpolated").
+        verbose (bool):
+            If True, emit a concise, human-readable summary via the logging
+            subsystem at INFO level. Default is False.
     Returns:
-        dict[str, float]:
-            Dictionary with keys:
-                - lx: 1/e full width along x cut (pixels).
-                - ly: 1/e full width along y cut (pixels).
-                - leq: 1/e radius of the radially averaged autocorrelation (pixels).
-                - r: anisotropy ratio lx / ly.
-        tuple[dict[str, float], dict[str, np.ndarray]]:
-            If return_autocorr is True, returns (metrics, ac_dict) where ac_dict contains:
-                - ac: 2D autocorrelation map (peak-normalized, shifted).
-                - xlag: 1D lag axis for x (pixels).
-                - ylag: 1D lag axis for y (pixels).
+        Dictionary with keys:
+            - lx: 1/e full width along x cut (pixels).
+            - ly: 1/e full width along y cut (pixels).
+            - leq: 1/e radius of the radially averaged autocorrelation (pixels).
+            - r: anisotropy ratio lx / ly.
+            - ac: 2D autocorrelation map (peak-normalized, shifted).
+            - xlag: 1D lag axis for x (pixels).
+            - ylag: 1D lag axis for y (pixels).
 
     Raises:
         ValueError
     """
-    img = np.asarray(image, dtype=float)
-    if img.ndim != 2:
+    data = np.asarray(image, dtype=float)
+    if data.ndim != 2:
         raise ValueError("image must be a 2D array.")
-    if min(img.shape) < 8:
-        raise ValueError("image too small for speckle grain metrics (min dimension < 8).")
+    if min(data.shape) < 128:
+        raise ValueError("image too small for speckle grain metrics (min dimension < 128).")
 
     ac, xlag, ylag = autocorr2d(
-        img,
+        data,
         dx=1.0,
         dy=1.0,
-        remove_mean=remove_mean,
-        standardize=standardize,
+        remove_mean=True,
+        standardize=False,
         normalize="peak",
     )
 
@@ -125,187 +120,109 @@ def grain(
         "ly": ly_px,
         "leq": float(leq_px),
         "r": float(r_aniso),
+        "autocorr": np.asarray(ac, dtype=float),
+        "xlag": np.asarray(xlag, dtype=float),
+        "ylag": np.asarray(ylag, dtype=float),    
     }
-
-    if return_autocorr:
-        ac_dict = {
-            "ac": np.asarray(ac, dtype=float),
-            "xlag": np.asarray(xlag, dtype=float),
-            "ylag": np.asarray(ylag, dtype=float),
-        }
-        return metrics, ac_dict
+    
+    if verbose:
+        logger.info(
+            "> grain: lx=%.2f | ly=%.2f | lx/ly=%.2f | leq=%.2f ",
+            metrics["lx"],
+            metrics["ly"],
+            metrics["r"],
+            metrics["leq"],
+        )
 
     return metrics
 
+# ---------------------------------------------------------------------------
+# Amplitude (visibility, contrast)
+# ---------------------------------------------------------------------------
 
-def visibility(image: np.ndarray) -> float:
+def amplitude(image: np.ndarray, verbose: bool = False) -> dict:
     """
-    Compute speckle visibility (speckle contrast) as std/mean.
+    Compute amplitude-related speckle metrics from an intensity image.
+
+    This function groups two commonly used amplitude fluctuation measures:
+
+    1) Visibility (a.k.a. speckle contrast):
+       Defined as std(I) / mean(I). It quantifies relative intensity
+       fluctuations around the mean and is directly linked to the number
+       of coherent modes in fully developed speckle. This metric is
+       sensitive to global intensity scaling but robust to spatial outliers
+       when NaNs are present.
+
+    2) Michelson contrast (robust form):
+       Defined as (I_high - I_low) / (I_high + I_low), where I_low and I_high
+       are obtained from a percentile-based min/max range. This emphasizes
+       peak-to-valley modulation and is more sensitive to extreme values,
+       making it useful for assessing modulation depth while remaining
+       robust against hot/dead pixels.
+
+    Both metrics are dimensionless and complementary: visibility captures
+    statistical fluctuations, while Michelson contrast captures dynamic
+    range.
 
     Parameters:
         image (np.ndarray):
             2D speckle intensity image.
+        verbose (bool):
+            If True, emit a concise, human-readable summary via the logging
+            subsystem at INFO level. Default is False.
 
     Returns:
-        float:
-            Visibility (dimensionless), defined as nanstd(image) / nanmean(image).
+        dict:
+            Dictionary with keys:
+                - "visibility": Speckle visibility (std / mean).
+                - "contrast": Robust Michelson contrast.
 
     Raises:
         ValueError:
-            If image is not 2D or if the mean intensity is not positive/finite.
+            If the input image is not 2D or if required intensity statistics
+            are non-finite or non-positive.
     """
+
     img = np.asarray(image, dtype=float)
     if img.ndim != 2:
         raise ValueError("image must be a 2D array.")
 
     mu = float(np.nanmean(img))
     if not np.isfinite(mu) or mu <= 0.0:
-        raise ValueError("Mean intensity must be positive and finite to compute visibility.")
+        raise ValueError("Mean intensity must be positive and finite.")
 
     sigma = float(np.nanstd(img))
-    return sigma / mu
-
-
-def michelson_contrast(image: np.ndarray) -> float:
-    """
-    Compute a robust Michelson contrast using percentile-based min/max.
-
-    Parameters:
-        image (np.ndarray):
-            2D speckle intensity image.
-
-    Returns:
-        float:
-            Michelson contrast (dimensionless), defined as (I_high - I_low) / (I_high + I_low),
-            where (I_low, I_high) come from percentile_minmax_range().
-
-    Raises:
-        ValueError:
-            If image is not 2D or if the denominator is not positive/finite.
-    """
-    img = np.asarray(image, dtype=float)
-    if img.ndim != 2:
-        raise ValueError("image must be a 2D array.")
+    visibility = sigma / mu
 
     vmin, vmax = percentile_minmax_range(img)
     denom = vmax + vmin
     if not np.isfinite(denom) or denom <= 0.0:
-        raise ValueError("Invalid percentile range for Michelson contrast (non-positive/finite denominator).")
+        raise ValueError("Invalid percentile range for Michelson contrast.")
 
-    return (vmax - vmin) / denom
+    contrast = (vmax - vmin) / denom
 
+    out = {"visibility": visibility, "contrast": contrast}
 
-def range_over_mean_contrast(image: np.ndarray) -> float:
+    if verbose:
+        logger.info(
+            "> visibility: %.2f | contrast: %.2f",
+            visibility,
+            contrast,
+        )
+
+    return out
+
+# ---------------------------------------------------------------------------
+# Spectral analysis
+# ---------------------------------------------------------------------------
+
+def bandwidth(image: np.ndarray, verbose: bool = False) -> dict[str, float]:
     """
-    Compute a robust range-over-mean contrast using percentile-based min/max.
-
-    Parameters:
-        image (np.ndarray):
-            2D speckle intensity image.
-
-    Returns:
-        float:
-            Range-over-mean contrast (dimensionless), defined as (I_high - I_low) / (2 * mean),
-            where (I_low, I_high) come from percentile_minmax_range() and mean is nanmean(image).
-
-    Raises:
-        ValueError:
-            If image is not 2D or if mean intensity is not positive/finite.
-    """
-    img = np.asarray(image, dtype=float)
-    if img.ndim != 2:
-        raise ValueError("image must be a 2D array.")
-
-    mu = float(np.nanmean(img))
-    if not np.isfinite(mu) or mu <= 0.0:
-        raise ValueError("Mean intensity must be positive and finite to compute range-over-mean contrast.")
-
-    vmin, vmax = percentile_minmax_range(img)
-    return (vmax - vmin) / (2.0 * mu)
-
-
-def spectral_participation_ratio(image: np.ndarray) -> float:
-    """
-    Compute an effective spectral degrees-of-freedom (DoF) score from the 2D PSD.
-
-    This metric measures how broadly the speckle field occupies spatial-frequency space.
-    It is computed as a participation ratio of the (normalized) power spectral density (PSD)
-    and can be interpreted as an effective number of occupied spectral “modes” (frequency bins).
-
-    Definition
-    ----------
-    Let P be the 2D PSD of the image and p_i = P_i / sum(P) its normalization over all bins.
-    The spectral participation ratio is:
-
-        SPR = 1 / sum_i (p_i^2)
-
-    This quantity is commonly referred to as the (inverse) participation ratio (IPR) in signal
-    processing and physics. It increases when spectral power is spread across many bins and
-    decreases when power is concentrated in a small subset of frequencies.
-
-    Practical interpretation (for speckle tracking)
-    -----------------------------------------------
-    - Higher SPR: richer/broader spatial-frequency content (more independent spectral components).
-    - Lower SPR: narrowband/smoother texture (spectral power concentrated near a few frequencies).
-
-    Mean removal and DC handling
-    ----------------------------
-    The image mean is removed before computing the PSD to reduce sensitivity to offsets and slow
-    background pedestals. The DC bin (zero frequency) is also set to zero as a safeguard against
-    residual numerical DC.
-
-    Parameters:
-        image (np.ndarray):
-            2D speckle intensity image.
-
-    Returns:
-        float:
-            Spectral participation ratio (dimensionless), an effective spectral DoF score.
-
-    Raises:
-        ValueError:
-            If image is not 2D, or if the PSD energy after DC removal is not positive/finite.
-    """
-    img = np.asarray(image, dtype=float)
-    if img.ndim != 2:
-        raise ValueError("image must be a 2D array.")
-
-    mu = float(np.nanmean(img))
-    if not np.isfinite(mu):
-        raise ValueError("image mean is not finite.")
-
-    img = img - mu
-
-    P, _fx, _fy = psd2d(img, dx=1.0, dy=1.0, scale=True)
-
-    P = np.asarray(P, dtype=float)
-    if P.ndim != 2:
-        raise ValueError("psd2d returned a non-2D PSD (unexpected).")
-
-    ny, nx = P.shape
-    P = P.copy()
-    P[ny // 2, nx // 2] = 0.0
-
-    P = np.nan_to_num(P, nan=0.0, posinf=0.0, neginf=0.0)
-    total = float(np.sum(P))
-    if not np.isfinite(total) or total <= 0.0:
-        raise ValueError("PSD energy is not positive/finite after mean removal and DC removal.")
-
-    p = P.ravel() / total
-    denom = float(np.sum(p * p))
-    if not np.isfinite(denom) or denom <= 0.0:
-        raise ValueError("Invalid participation denominator (unexpected).")
-
-    return 1.0 / denom
-
-
-def bandwidth(image: np.ndarray) -> dict[str, float]:
-    """
-    Compute spatial-frequency bandwidth metrics from the 2D PSD (pixel domain).
+    Compute spatial-frequency bandwidth metrics from the 2D PSD (pixel domain),
+    including a spectral participation ratio (SPR) computed from the same PSD.
 
     This function characterizes how "broad" the speckle texture is in spatial-frequency space.
-    All frequency quantities are returned in cycles/pixel (pixel domain), which is the relevant
-    unit for speckle tracking performance (feature size in pixels, window sizing, etc.).
+    All frequency quantities are returned in cycles/pixel (pixel domain).
 
     Metrics
     -------
@@ -318,7 +235,7 @@ def bandwidth(image: np.ndarray) -> dict[str, float]:
 
     f95 : float
         Encircled-energy radius in frequency space: the radial frequency such that 95% of the
-        PSD energy is contained within f <= f95 (computed from the 2D PSD, not from a radial mean).
+        PSD energy is contained within f <= f95 (computed from the 2D PSD).
 
     sig_fx, sig_fy : float
         RMS bandwidth along x and y:
@@ -331,16 +248,31 @@ def bandwidth(image: np.ndarray) -> dict[str, float]:
 
             rf = sig_fx / sig_fy
 
+    spr : float
+        Spectral participation ratio (effective spectral DoF), computed from the normalized PSD:
+
+            p_i = P_i / sum(P)
+            spr = 1 / sum_i (p_i^2)
+
+        This measures how many spectral bins effectively participate (higher = more spread/less concentrated).
+
     Mean removal and DC handling
     ----------------------------
     The image mean is removed before computing the PSD to reduce sensitivity to offsets and
     slow background pedestals. The DC bin (zero frequency) is set to zero as a safeguard
     against residual numerical DC.
 
+    Notes on frequency support
+    --------------------------
+    Metrics are computed over an inscribed circular region in frequency space
+    (FR <= min(max|fx|, max|fy|)) to avoid corner bins that may bias radial measures.
+
     Parameters:
         image (np.ndarray):
             2D speckle intensity image.
-
+        verbose (bool):
+            If True, emit a concise, human-readable summary via the logging
+            subsystem at INFO level. Default is False.
     Returns:
         dict[str, float]:
             Dictionary with keys:
@@ -349,6 +281,7 @@ def bandwidth(image: np.ndarray) -> dict[str, float]:
                 - "sig_fx": RMS bandwidth along fx (cycles/pixel)
                 - "sig_fy": RMS bandwidth along fy (cycles/pixel)
                 - "rf": anisotropy ratio sig_fx / sig_fy
+                - "spr": spectral participation ratio (dimensionless)
 
     Raises:
         ValueError:
@@ -365,6 +298,9 @@ def bandwidth(image: np.ndarray) -> dict[str, float]:
 
     P, fx, fy = psd2d(img, dx=1.0, dy=1.0, scale=True)
     P = np.asarray(P, dtype=float)
+
+    if P.ndim != 2:
+        raise ValueError("psd2d returned a non-2D PSD (unexpected).")
 
     ny, nx = P.shape
     P = np.nan_to_num(P, nan=0.0, posinf=0.0, neginf=0.0)
@@ -401,13 +337,33 @@ def bandwidth(image: np.ndarray) -> dict[str, float]:
         idx = FRs.size - 1
     f95 = float(FRs[idx])
 
-    return {
+    p = Pm / total
+    denom = float(np.sum(p * p))
+    if not np.isfinite(denom) or denom <= 0.0:
+        raise ValueError("Invalid SPR denominator (unexpected).")
+    spr = float(1.0 / denom)
+
+    spectral =  {
         "feq": feq,
         "f95": f95,
         "sig_fx": sig_fx,
         "sig_fy": sig_fy,
         "rf": rf,
+        "spr": spr,
     }
+    if verbose:
+        logger.info(
+            "> bandwidth: fx=%.4f | fy=%.4f | fx/fy=%.2f | feq=%.4f | f95=%.4f | spr=%.0f",
+            spectral["sig_fx"],
+            spectral["sig_fy"],
+            spectral["rf"],
+            spectral["feq"],
+            spectral["f95"],
+            spectral["spr"],
+        )
+
+    return spectral
+
 
 def speckle_stats(
     data: np.ndarray,

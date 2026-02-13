@@ -1,67 +1,18 @@
-""" 
-Image Quality Ranking Methods
-
-based on 
-[1] S. Pertuz, D. Puig, and M. A. Garcia, 
+# SPDX-License-Identifier: CECILL-2.1
+# Copyright (c) 2026 ESRF - the European Synchrotron
+"""
+S. Pertuz, D. Puig, and M. A. Garcia, 
 "Analysis of focus measure operators for shape-from-focus," 
 Pattern Recognition 46(5), 1415–1432 (2013). 
-
-[2] S. Koho, E. Fazeli, J. E. Eriksson, and P. E. Hänninen,
-"Image Quality Ranking Method for Microscopy,"
-Sci Rep 6(1), (2016). 
 """
 
-__author__ = ['Rafael Celestre']
-__contact__ = 'rafael.celestre@synchrotron-soleil.fr'
-__license__ = 'CC BY-NC-SA 4.0'
-__copyright__ = 'Synchrotron SOLEIL, Saint Aubin, France'
-__created__ = '10/JAN/2025'
-__changed__ = '10/JAN/2025'
+
+from __future__ import annotations
 
 from typing import Union
 
 import cv2
 import numpy as np
-from scipy.stats import describe, entropy
-
-
-
-# ****************************************************************************
-# ********************** statistical moments
-# ****************************************************************************
-
-def get_statistical_metrics(image: np.ndarray) -> dict:
-    """
-    Calculate statistical moments and the Shannon entropy for a 16-bit image.
-
-    Parameters:
-        image (np.ndarray): A 16-bit single-channel image.
-
-    Returns:
-        dict: A dictionary containing the following statistical moments:
-            - mean: The mean intensity of the image.
-            - variance: The variance of the intensity values.
-            - skewness: The skewness of the intensity distribution.
-            - kurtosis: The kurtosis of the intensity distribution.
-            - entropy: The Shannon entropy of the image.
-    """
-    mean, variance = describe(image, axis=None)[2:4]
-    skewness = describe(image, axis=None).skewness
-    kurtosis = describe(image, axis=None).kurtosis
-    shannon_entropy = entropy(image, axis=None)
-
-    return {
-        'mean': mean,
-        'variance': variance,
-        'skewness': skewness,
-        'kurtosis': kurtosis,
-        'entropy': shannon_entropy,
-        'SNRdB': 10*np.log10(mean/variance)
-        }
-
-# ****************************************************************************
-# ********************** sharpness metrics
-# ****************************************************************************
 
 def get_sharpness_metrics(image: np.ndarray, **kwargs) -> dict:
     """

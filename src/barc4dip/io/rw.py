@@ -63,8 +63,13 @@ def _infer_extension_from_paths(paths: Sequence[str]) -> str:
     return first
 
 
-def read_image(image_path: str | Sequence[str], *, file_extension: str | None = None,
-               verbose: bool = False,) -> np.ndarray:
+def read_image(
+    image_path: str | Sequence[str],
+    *,
+    file_extension: str | None = None,
+    image_number: int | None = None,
+    verbose: bool = False,
+) -> np.ndarray:
     """
     Reads one image or a stack of images from disk.
 
@@ -73,6 +78,10 @@ def read_image(image_path: str | Sequence[str], *, file_extension: str | None = 
             Path to a file, or a sequence of file paths.
         file_extension (str | None):
             Optional extension override ("tif", "edf", "h5", ...).
+        image_number (int | None):
+            Frame index to load when reading a single HDF5 file containing a 3D dataset
+            (N, H, W). If None (default), the full dataset is returned.
+            This option is not supported for TIFF/EDF in this project.
         verbose (bool):
             If True, prints basic information about the loaded data.
 
@@ -93,16 +102,23 @@ def read_image(image_path: str | Sequence[str], *, file_extension: str | None = 
     else:
         raise TypeError("image_path must be a str or a sequence of str")
 
+    if not isinstance(image_path, str) and image_number is not None:
+        raise ValueError("image_number is only supported when image_path is a single file (str)")
+
     kind = _READ_EXTS.get(ext)
     if kind is None:
         raise ValueError(f"Unsupported read extension: '{ext}'")
 
     if kind == "tiff":
+        if image_number is not None:
+            raise ValueError("image_number is only supported for HDF5 stacks (single-file .h5/.hdf5).")
         data = read_tiff(image_path)
     elif kind == "edf":
+        if image_number is not None:
+            raise ValueError("image_number is only supported for HDF5 stacks (single-file .h5/.hdf5).")
         data = read_edf(image_path)
     elif kind == "h5":
-        data = read_h5(image_path)
+        data = read_h5(image_path, image_number=image_number)
     else:
         raise RuntimeError(f"Unhandled reader kind: {kind}")
 

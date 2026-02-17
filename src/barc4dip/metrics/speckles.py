@@ -425,6 +425,7 @@ def speckle_stats(
 
     out: dict = {
         "meta": {
+            "kind": "speckles",
             "input_shape": (int(h), int(w)),
             "requested_groups": sorted(groups),
         },

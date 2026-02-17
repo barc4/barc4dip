@@ -4,61 +4,111 @@
 """
 Markdown reporting utilities (text-only logbook summaries).
 
-This module formats a compact `.md` report from the dictionary returned by
-`dip.metrics.speckles.speckle_stats(...)`.
+The public entry point `logbook_report()` formats a compact Markdown report from
+the dictionary returned by a metrics aggregator (e.g. speckles, stats, sharpness,
+perceptual). 
 
-Design goals
-------------
-- Terminal/logbook friendly: readable in `less`, easy to copy/paste.
-- No images.
-- Never dump heavy arrays (e.g. autocorr, xlag, ylag).
-- Fixed ordering of metric blocks: amplitude -> grain -> moments(stats) -> bandwidth.
-- If tiles exist, print a minimal set of tile matrices (mean±std) under each block:
-  - amplitude: visibility, contrast
-  - grain: lx, ly
-  - stats: mean, std (std derived from variance)
-  - bandwidth: fx, fy
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
-from ..utils import now 
+from ..utils import now
+
+_LogbookFormatter = Callable[..., str]
+_LOGBOOK_FORMATTERS: dict[str, _LogbookFormatter] = {}
+
+
+def _register(kind: str) -> Callable[[_LogbookFormatter], _LogbookFormatter]:
+    kind_norm = kind.strip().lower()
+
+    def _decorator(fn: _LogbookFormatter) -> _LogbookFormatter:
+        _LOGBOOK_FORMATTERS[kind_norm] = fn
+        return fn
+
+    return _decorator
 
 
 def logbook_report(
     stats: dict,
-    report_path: str | Path,
+    report_path: str | Path | None = None,
     *,
     complete: bool = False,
     notes: bool = False,
-    ) -> Path:
+) -> str:
     """
-    Write a compact Markdown speckle summary to disk.
+    Build (and optionally write) a compact Markdown logbook summary.
 
     Parameters:
         stats (dict):
-            Dictionary returned by `dip.metrics.speckles.speckle_stats(...)`.
-        report_path (str | Path):
-            Output path for the Markdown file (e.g. "run/report.md").
+            Dictionary returned by a metrics aggregator.
+        report_path (str | Path | None):
+            If provided, write the Markdown text to this path.
+        complete (bool):
+            If True, include additional (more verbose) metric blocks.
+            Default is False.
+        notes (bool):
+            If True, include explanatory notes. Default is False.
 
     Returns:
-        Path:
-            Path to the written Markdown file.
+        str:
+            Markdown text.
 
     Raises:
         TypeError:
             If stats is not a dict.
         ValueError:
-            If required keys are missing or malformed.
+            If required keys are missing, or the report kind cannot be resolved.
+        FileNotFoundError:
+            If report_path is provided but its parent directory does not exist.
     """
     if not isinstance(stats, dict):
-        raise TypeError("write_markdown_report expects stats to be a dict")
+        raise TypeError("logbook_report expects stats to be a dict")
 
+    meta = stats.get("meta")
+    if not isinstance(meta, dict):
+        raise ValueError("stats must contain dict key 'meta'")
+
+    resolved_kind = meta.get("kind")
+    if not isinstance(resolved_kind, str) or not resolved_kind.strip():
+        raise ValueError(
+            "Cannot determine report kind. Set stats['meta']['kind']."
+        )
+
+    resolved_kind = resolved_kind.strip().lower()
+
+    formatter = _LOGBOOK_FORMATTERS.get(resolved_kind)
+    if formatter is None:
+        supported = ", ".join(sorted(_LOGBOOK_FORMATTERS))
+        raise ValueError(
+            f"Unsupported report kind: {resolved_kind!r}. Supported: {supported}"
+        )
+
+    text = formatter(stats, complete=complete, notes=notes)
+
+    if report_path is not None:
+        report_path = Path(report_path)
+        if not report_path.parent.exists():
+            raise FileNotFoundError(
+                f"Parent directory does not exist: {report_path.parent}"
+            )
+        report_path.write_text(text, encoding="utf-8")
+
+    return text
+
+
+@_register("speckles")
+def _logbook_speckles(
+    stats: dict,
+    *,
+    complete: bool = False,
+    notes: bool = False,
+) -> str:
     meta = stats.get("meta")
     full = stats.get("full")
     if not isinstance(meta, dict) or not isinstance(full, dict):
@@ -132,10 +182,13 @@ def logbook_report(
         if notes:
             lines.append("Notes: ")
             lines.append(" - visibility: std(I)/mean(I).")
-            lines.append(" - contrast: (I_high - I_low)/(I_high + I_low), where I_low and I_high")
-            lines.append("   are obtained from a 99.5% percentile-based min/max range.")
+            lines.append(
+                " - contrast: (I_high - I_low)/(I_high + I_low), where I_low and I_high"
+            )
+            lines.append(
+                "   are obtained from a 99.5% percentile-based min/max range."
+            )
             lines.append("")
-
 
     if "grain" in full:
         g = full["grain"]
@@ -174,7 +227,9 @@ def logbook_report(
         if notes:
             lines.append("Notes: ")
             lines.append(" - units in pixel")
-            lines.append(" - speckle grain metrics are computed from the autocorrelation peak")
+            lines.append(
+                " - speckle grain metrics are computed from the autocorrelation peak"
+            )
             lines.append(" - widths are given as 1/e values")
             lines.append(" - leq: 1/e radius of the radially averaged autocorrelation")
             lines.append("")
@@ -182,7 +237,6 @@ def logbook_report(
     if "stats" in full:
         s = full["stats"]
         lines.append("## Moments (full image)")
-
         lines.append("```")
         lines.append(
             f"> moments: mean={_f(s.get('mean'), 0)} | std={_f(s.get('std'), 0)} | "
@@ -190,7 +244,6 @@ def logbook_report(
             f"SNR={_f(s.get('SNRdB'), 2)} dB"
         )
         lines.append("```")
-
         lines.append("")
 
         _append_tiles_pair(
@@ -231,12 +284,20 @@ def logbook_report(
         if notes:
             lines.append("Notes: ")
             lines.append(" - units in gray scale (uint16)")
-            lines.append(" - **skewness** shows the *asymmetry* of the distribution. ")
-            lines.append("    (if positive, the histogram has a longer “tail” on the right side; if negative, on the left)")
-            lines.append(" - **Kurtosis** shows the *peakedness* of the profile. ")
-            lines.append("    (A Gaussian beam has kurtosis ≈ 0 in the “excess” convention,")
-            lines.append("     if positive, the histogram has a sharper peak and heavier tails, ")
-            lines.append("     if neagtive, the histogram has a flatter, more top-hat-like profile)")
+            lines.append(" - **skewness** shows the *asymmetry* of the distribution.")
+            lines.append(
+                "    (if positive, the histogram has a longer “tail” on the right side; if negative, on the left)"
+            )
+            lines.append(" - **Kurtosis** shows the *peakedness* of the profile.")
+            lines.append(
+                "    (A Gaussian beam has kurtosis ≈ 0 in the “excess” convention,"
+            )
+            lines.append(
+                "     if positive, the histogram has a sharper peak and heavier tails,"
+            )
+            lines.append(
+                "     if neagtive, the histogram has a flatter, more top-hat-like profile)"
+            )
             lines.append(" - SNR dB: 20*log10(mean/std)")
             lines.append("")
 
@@ -250,19 +311,18 @@ def logbook_report(
             f"f95={_f(b.get('f95'), 4)}"
         )
         lines.append("```")
-
         lines.append("")
 
         _append_tiles_pair(
-                lines,
-                tiles,
-                group="bandwidth",
-                key_left="sig_fx",
-                title_left="fx (tiles)",
-                fmt_left=("{:.4f}", "{:.4f}"),
-                key_right="sig_fy",
-                title_right="fy (tiles)",
-                fmt_right=("{:.4f}", "{:.4f}"),
+            lines,
+            tiles,
+            group="bandwidth",
+            key_left="sig_fx",
+            title_left="fx (tiles)",
+            fmt_left=("{:.4f}", "{:.4f}"),
+            key_right="sig_fy",
+            title_right="fy (tiles)",
+            fmt_right=("{:.4f}", "{:.4f}"),
         )
 
         if complete:
@@ -287,25 +347,19 @@ def logbook_report(
                 fmt_left=("{:.4f}", "{:.4f}"),
                 key_right=None,
                 title_right=None,
-                fmt_right=None
+                fmt_right=None,
             )
         if notes:
             lines.append("Notes: ")
             lines.append(" - units in cycles/pixel")
             lines.append(" - fx, fy: RMS bandwidth computed from the 2D PSD")
             lines.append(" - feq: radial RMS bandwidth computed from the 2D PSD")
-            lines.append(" - f95: radial frequency such that 95% of the PSD energy is contained")
+            lines.append(
+                " - f95: radial frequency such that 95% of the PSD energy is contained"
+            )
             lines.append("")
 
-    text = "\n".join(lines).rstrip() + "\n"
-
-    if report_path is not None:
-        report_path = Path(report_path)
-        if not report_path.parent.exists():
-            raise FileNotFoundError(f"Parent directory does not exist: {report_path.parent}")
-        report_path.write_text(text, encoding="utf-8")
-
-    return text
+    return "\n".join(lines).rstrip() + "\n"
 
 
 def _f(x: object, ndigits: int) -> str:
@@ -374,7 +428,6 @@ def _append_tiles_pair(
         lines.append("")
         return
 
-    # Paired mode
     if title_right is None or fmt_right is None:
         return
     right = g.get(key_right, None)
@@ -386,9 +439,10 @@ def _append_tiles_pair(
     if Rm.shape != (3, 3) or Rs.shape != (3, 3):
         return
 
-    matrix_lines, left_width, gap = _format_pair_matrices(Lm, Ls, fmt_left, Rm, Rs, fmt_right)
+    matrix_lines, left_width, gap = _format_pair_matrices(
+        Lm, Ls, fmt_left, Rm, Rs, fmt_right
+    )
 
-    # Align the start of the right title with the start of the right matrix
     header = title_left.ljust(left_width + gap) + title_right
 
     lines.append(header)
@@ -403,12 +457,16 @@ def _format_single_matrix(
     std: np.ndarray,
     fmt: tuple[str, str],
 ) -> list[str]:
-    mf, sf = fmt
-    out: list[str] = []
+    fmt_m, fmt_s = fmt
+
+    def cell(i: int, j: int) -> str:
+        return (fmt_m.format(mean[i, j]) + "±" + fmt_s.format(std[i, j])).replace("nan", "nan")
+
+    lines: list[str] = []
     for i in range(3):
-        cells = [f"{mf.format(mean[i, j])}±{sf.format(std[i, j])}" for j in range(3)]
-        out.append("  ".join(cells))
-    return out
+        row = "  ".join(cell(i, j) for j in range(3))
+        lines.append(row)
+    return lines
 
 
 def _format_pair_matrices(
@@ -418,24 +476,25 @@ def _format_pair_matrices(
     Rm: np.ndarray,
     Rs: np.ndarray,
     fmt_right: tuple[str, str],
+    *,
+    gap: int = 4,
 ) -> tuple[list[str], int, int]:
-    lmf, lsf = fmt_left
-    rmf, rsf = fmt_right
+    lfm, lfs = fmt_left
+    rfm, rfs = fmt_right
 
-    left_rows: list[str] = []
-    right_rows: list[str] = []
+    def lcell(i: int, j: int) -> str:
+        return (lfm.format(Lm[i, j]) + "±" + lfs.format(Ls[i, j])).replace("nan", "nan")
 
+    def rcell(i: int, j: int) -> str:
+        return (rfm.format(Rm[i, j]) + "±" + rfs.format(Rs[i, j])).replace("nan", "nan")
+
+    Lrows = ["  ".join(lcell(i, j) for j in range(3)) for i in range(3)]
+    Rrows = ["  ".join(rcell(i, j) for j in range(3)) for i in range(3)]
+
+    left_width = max(len(s) for s in Lrows) if Lrows else 0
+
+    lines = []
     for i in range(3):
-        left_cells = [f"{lmf.format(Lm[i, j])}±{lsf.format(Ls[i, j])}" for j in range(3)]
-        right_cells = [f"{rmf.format(Rm[i, j])}±{rsf.format(Rs[i, j])}" for j in range(3)]
-        left_rows.append("  ".join(left_cells))
-        right_rows.append("  ".join(right_cells))
+        lines.append(Lrows[i].ljust(left_width) + (" " * gap) + Rrows[i])
 
-    left_width = max(len(r) for r in left_rows) if left_rows else 0
-    gap = 4
-
-    out: list[str] = []
-    for lr, rr in zip(left_rows, right_rows, strict=True):
-        out.append(lr.ljust(left_width) + (" " * gap) + rr)
-
-    return out, left_width, gap
+    return lines, left_width, gap

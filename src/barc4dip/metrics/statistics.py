@@ -44,7 +44,7 @@ def distribution_moments(
     Returns:
         Dictionary with keys:
             - mean: Mean intensity (finite values only).
-            - variance: Intensity variance.
+            - std: Standard deviation as sqrt(intensity variance).
             - skewness: Skewness of the intensity distribution.
             - kurtosis: Kurtosis of the intensity distribution.
             - frac_zero: Fraction of finite pixels with |value| <= eps.

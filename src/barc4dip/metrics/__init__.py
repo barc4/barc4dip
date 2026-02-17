@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
-from . import statistics, speckles
+from . import speckles, statistics
+from .speckles import speckle_stats
+from .statistics import distribution_moments
 
 __all__ = [
     "statistics",
     "speckles",
+    "speckle_stats",
+    "distribution_moments"
 ]

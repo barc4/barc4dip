@@ -12,12 +12,12 @@ from typing import Literal, Sequence
 
 import numpy as np
 
-from barc4dip.maths.radial import radial_mean_binned, radial_mean_interpolated
-from barc4dip.maths.stats import distance_at_fraction_from_peak, width_at_fraction
-from barc4dip.metrics.statistics import distribution_moments
-from barc4dip.signal.corr import autocorr2d
-from barc4dip.signal.fft import psd2d
-from barc4dip.utils.range import percentile_minmax_range
+from ..maths.radial import radial_mean_binned, radial_mean_interpolated
+from ..maths.stats import distance_at_fraction_from_peak, width_at_fraction
+from .statistics import distribution_moments
+from ..signal.corr import autocorr2d
+from ..signal.fft import psd2d
+from ..utils.range import percentile_minmax_range
 
 logger = logging.getLogger(__name__)
 

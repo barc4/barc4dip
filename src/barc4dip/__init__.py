@@ -5,7 +5,7 @@ from importlib.metadata import version as _version
 
 __version__ = _version("barc4dip")
 
-# Expose modules/packages for debugging (no eager deep imports)
+from . import maths
 from .io import read_image, write_image
 from .preprocessing import flat_field_correction
 from . import metrics

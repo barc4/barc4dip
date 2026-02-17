@@ -2,3 +2,10 @@
 # Copyright (c) 2026 ESRF - the European Synchrotron
 
 from __future__ import annotations
+
+from . import radial, stats
+
+__all__ = [
+    "radial",
+    "stats",
+]

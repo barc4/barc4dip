@@ -146,19 +146,10 @@ def amplitude(image: np.ndarray, verbose: bool = False) -> dict:
 
     This function groups two commonly used amplitude fluctuation measures:
 
-    1) Visibility (a.k.a. speckle contrast):
-       Defined as std(I) / mean(I). It quantifies relative intensity
-       fluctuations around the mean and is directly linked to the number
-       of coherent modes in fully developed speckle. This metric is
-       sensitive to global intensity scaling but robust to spatial outliers
-       when NaNs are present.
+    1) Visibility: std(I) / mean(I). 
 
-    2) Michelson contrast (robust form):
-       Defined as (I_high - I_low) / (I_high + I_low), where I_low and I_high
-       are obtained from a percentile-based min/max range. This emphasizes
-       peak-to-valley modulation and is more sensitive to extreme values,
-       making it useful for assessing modulation depth while remaining
-       robust against hot/dead pixels.
+    2) robust Michelson contrast: (I_high - I_low) / (I_high + I_low), 
+       where I_low and I_high are obtained from a percentile-based min/max range.
 
     Both metrics are dimensionless and complementary: visibility captures
     statistical fluctuations, while Michelson contrast captures dynamic
@@ -364,6 +355,9 @@ def bandwidth(image: np.ndarray, verbose: bool = False) -> dict[str, float]:
 
     return spectral
 
+# ---------------------------------------------------------------------------
+# Aggregator
+# ---------------------------------------------------------------------------
 
 def speckle_stats(
     image: np.ndarray,
@@ -425,6 +419,9 @@ def speckle_stats(
 
     h, w = image.shape
     groups = _normalize_metric_groups(metrics)
+
+    if verbose:
+        logger.info("\nspeckle stats for a (h x w: %.0f x %.0f) image:", h, w)
 
     out: dict = {
         "meta": {

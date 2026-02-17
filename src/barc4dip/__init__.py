@@ -11,6 +11,7 @@ from .preprocessing import flat_field_correction
 from . import metrics
 from . import utils
 from . import plotting
+from .report import logbook_report
 
 # Keep these commented until they exist as packages/modules
 # from . import geometry
@@ -31,4 +32,5 @@ __all__ = [
     "metrics",
     # "signal",
     # "math",
+    "logbook_report"
 ]

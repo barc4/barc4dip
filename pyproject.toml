@@ -30,7 +30,8 @@ examples = [
     "jupyterlab",
     "ipympl"
 ]
-
+[project.scripts]
+barc4dip-speckles = "barc4dip.report.cli:main"
 [project.urls]
 Homepage = "https://github.com/barc4/barc4dip"
 Repository = "https://github.com/barc4/barc4dip"

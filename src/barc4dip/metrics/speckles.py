@@ -12,12 +12,12 @@ from typing import Literal, Sequence
 
 import numpy as np
 
-from barc4dip.maths.radial import radial_mean_binned, radial_mean_interpolated
-from barc4dip.maths.stats import distance_at_fraction_from_peak, width_at_fraction
-from barc4dip.metrics.statistics import distribution_moments
-from barc4dip.signal.corr import autocorr2d
-from barc4dip.signal.fft import psd2d
-from barc4dip.utils.range import percentile_minmax_range
+from ..maths.radial import radial_mean_binned, radial_mean_interpolated
+from ..maths.stats import distance_at_fraction_from_peak, width_at_fraction
+from .statistics import distribution_moments
+from ..signal.corr import autocorr2d
+from ..signal.fft import psd2d
+from ..utils.range import percentile_minmax_range
 
 logger = logging.getLogger(__name__)
 
@@ -146,19 +146,10 @@ def amplitude(image: np.ndarray, verbose: bool = False) -> dict:
 
     This function groups two commonly used amplitude fluctuation measures:
 
-    1) Visibility (a.k.a. speckle contrast):
-       Defined as std(I) / mean(I). It quantifies relative intensity
-       fluctuations around the mean and is directly linked to the number
-       of coherent modes in fully developed speckle. This metric is
-       sensitive to global intensity scaling but robust to spatial outliers
-       when NaNs are present.
+    1) Visibility: std(I) / mean(I). 
 
-    2) Michelson contrast (robust form):
-       Defined as (I_high - I_low) / (I_high + I_low), where I_low and I_high
-       are obtained from a percentile-based min/max range. This emphasizes
-       peak-to-valley modulation and is more sensitive to extreme values,
-       making it useful for assessing modulation depth while remaining
-       robust against hot/dead pixels.
+    2) robust Michelson contrast: (I_high - I_low) / (I_high + I_low), 
+       where I_low and I_high are obtained from a percentile-based min/max range.
 
     Both metrics are dimensionless and complementary: visibility captures
     statistical fluctuations, while Michelson contrast captures dynamic
@@ -364,12 +355,16 @@ def bandwidth(image: np.ndarray, verbose: bool = False) -> dict[str, float]:
 
     return spectral
 
+# ---------------------------------------------------------------------------
+# Aggregator
+# ---------------------------------------------------------------------------
 
 def speckle_stats(
     image: np.ndarray,
     *,
     metrics: str | Sequence[str] = "all",
     tiles: bool = False,
+    display_origin: Literal["upper", "lower"] = "lower",
     saturation_value: float | None = 65535.0,
     eps: float = 1e-6,
     verbose: bool = False,
@@ -393,6 +388,11 @@ def speckle_stats(
                 - aggregated from 9x9 sub-tiles (mean and std per 3x3 cell), or
                 - computed directly on 3x3 tiles (std returned as NaNs).
             Tiles are only computed if the implied tile size meets MIN_TILE_PX.
+        display_origin (Literal["upper", "lower"]):
+            Defines the vertical origin convention used for analysis.     
+                - "lower" (default): detector-aligned convention.   
+                - "upper": NumPy convention. Index (0, 0) is the
+                top-left pixel
         saturation_value (float | None):
             Passed to distribution_moments (default: 65535.0).
         eps (float):
@@ -422,12 +422,20 @@ def speckle_stats(
         raise TypeError("speckle_stats expects a numpy.ndarray")
     if image.ndim != 2:
         raise ValueError(f"Expected 2D array, got ndim={image.ndim}")
+    
+    if display_origin == "lower":
+        image = np.flip(image, axis=-2)
 
     h, w = image.shape
     groups = _normalize_metric_groups(metrics)
 
+    if verbose:
+        logger.info("\nspeckle stats for a (h x w: %.0f x %.0f) image:", h, w)
+
     out: dict = {
         "meta": {
+            "kind": "speckles",
+            "display_origin": display_origin,
             "input_shape": (int(h), int(w)),
             "requested_groups": sorted(groups),
         },

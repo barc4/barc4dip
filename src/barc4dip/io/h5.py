@@ -14,7 +14,7 @@ import numpy as np
 import h5py
 
 
-def read_h5(image_path: str | Sequence[str]) -> np.ndarray:
+def read_h5(image_path: str | Sequence[str], *, image_number: int = None) -> np.ndarray:
     """
     Reads one or multiple HDF5 images from disk.
 
@@ -24,22 +24,32 @@ def read_h5(image_path: str | Sequence[str]) -> np.ndarray:
     Parameters:
         image_path (str | Sequence[str]):
             Path to an HDF5 file, or a sequence of paths to HDF5 files.
+        image_number (int | None):
+            Frame index to load when `image_path` is a single file containing a 3D dataset
+            (N, H, W). If None (default), the full dataset is returned.
+
+            Notes:
+                - This option is only supported for the single-file case (`image_path` is str).
+                - Negative indices follow NumPy/Python conventions.
 
     Returns:
         np.ndarray:
-            - 2D array if a single file is provided and the dataset is 2D.
-            - 3D array (N, H, W) if:
-                * a single file contains a 3D dataset, OR
-                * a sequence of files is provided and each file contains a 2D dataset,
-                in which case one frame per file is stacked along axis 0.
-            - If a sequence of files is provided and each file contains a 3D dataset,
-            datasets are concatenated along axis 0.
+            - If `image_path` is a single file:
+                * 2D array (H, W) if the dataset is 2D.
+                * 3D array (N, H, W) if the dataset is 3D and `image_number` is None.
+                * 2D array (H, W) if the dataset is 3D and `image_number` is provided.
+            - If `image_path` is a sequence of files:
+                * 3D array (N, H, W) if each file contains a 2D dataset
+                  (one frame per file is stacked along axis 0).
+                * 3D array (N, H, W) if each file contains a 3D dataset
+                  (datasets are concatenated along axis 0).
 
     Raises:
         TypeError:
             If image_path is not a str or a sequence of str.
         ValueError:
-            If the sequence is empty, if dataset dimensionality is not 2D/3D,
+            If `image_number` is provided for a sequence of files, if the sequence is empty,
+            if dataset dimensionality is not 2D/3D, if `image_number` is out of bounds,
             or if shapes are inconsistent across files.
         FileNotFoundError:
             If any provided file does not exist.
@@ -51,7 +61,7 @@ def read_h5(image_path: str | Sequence[str]) -> np.ndarray:
 
     dataset_path = "entry_0000/measurement/data"
 
-    def _read_one(p: str) -> np.ndarray:
+    def _read_one(p: str, *, image_number: int | None = None) -> np.ndarray:
         if not isinstance(p, str):
             raise TypeError("All elements of image_path must be strings")
 
@@ -63,7 +73,25 @@ def read_h5(image_path: str | Sequence[str]) -> np.ndarray:
             with h5py.File(fp, "r") as f:
                 if dataset_path not in f:
                     raise KeyError(f"Dataset not found: '{dataset_path}' in '{p}'")
-                arr = f[dataset_path][()]
+                dset = f[dataset_path]
+
+                if image_number is None:
+                    arr = dset[()]
+                else:
+                    if dset.ndim != 3:
+                        raise ValueError(
+                            f"image_number is only valid for 3D datasets (N, H, W); "
+                            f"got shape {dset.shape} in '{p}'"
+                        )
+                    n_frames = int(dset.shape[0])
+                    idx = int(image_number)
+                    if idx < 0:
+                        idx = n_frames + idx
+                    if idx < 0 or idx >= n_frames:
+                        raise ValueError(
+                            f"image_number={image_number} out of bounds for dataset with {n_frames} frames in '{p}'"
+                        )
+                    arr = dset[idx, :, :]
         except OSError as e:
             raise OSError(f"Failed to read HDF5 file: '{p}'") from e
 
@@ -75,7 +103,10 @@ def read_h5(image_path: str | Sequence[str]) -> np.ndarray:
         return arr
 
     if isinstance(image_path, str):
-        return _read_one(image_path)
+        return _read_one(image_path, image_number=image_number)
+
+    if image_number is not None:
+        raise ValueError("image_number is only supported when image_path is a single file (str)")
 
     if isinstance(image_path, Sequence):
         if len(image_path) == 0:

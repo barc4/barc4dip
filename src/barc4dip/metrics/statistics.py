@@ -44,7 +44,7 @@ def distribution_moments(
     Returns:
         Dictionary with keys:
             - mean: Mean intensity (finite values only).
-            - variance: Intensity variance.
+            - std: Standard deviation as sqrt(intensity variance).
             - skewness: Skewness of the intensity distribution.
             - kurtosis: Kurtosis of the intensity distribution.
             - frac_zero: Fraction of finite pixels with |value| <= eps.
@@ -79,10 +79,12 @@ def distribution_moments(
 
     frac_zero = float(np.mean(np.abs(x) <= eps))
 
+    std = float(np.sqrt(variance)) if variance >= 0.0 else float("nan")
+
     if variance == 0.0:
         snr_db = float("inf") if mean > 0.0 else float("nan")
     else:
-        snr_linear = mean / np.sqrt(variance)
+        snr_linear = mean / std
         if snr_linear > 0.0:
             snr_db = float(20.0 * np.log10(snr_linear))
         elif snr_linear == 0.0:
@@ -97,7 +99,7 @@ def distribution_moments(
 
     moments = {
         "mean": mean,
-        "variance": variance,
+        "std": std,
         "skewness": skewness,
         "kurtosis": kurtosis,
         "frac_zero": frac_zero,
@@ -106,11 +108,10 @@ def distribution_moments(
     }
 
     if verbose:
-        std = float(np.sqrt(variance)) if variance >= 0.0 else float("nan")
         logger.info(
             "> moments: mean=%.0f | std=%.0f | skew=%.2f | kurt=%.2f | SNR=%.2f dB | zero=%.6f | sat=%.6f",
             moments["mean"],
-            std,
+            moments["std"],
             moments["skewness"],
             moments["kurtosis"],
             moments["SNRdB"],

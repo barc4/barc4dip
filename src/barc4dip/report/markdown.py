@@ -133,6 +133,17 @@ def _logbook_speckles(
     else:
         lines.append("- Image shape: (unknown)")
 
+    display_origin = meta.get("display_origin", "unknown")
+
+    convention_map = {
+        "lower": "detector-aligned, origin at bottom-left",
+        "upper": "numpy-aligned, origin at top-left",
+    }
+
+    convention = convention_map.get(display_origin, "unknown")
+
+    lines.append(f"- Image orientation: {display_origin} ({convention})")
+    
     if "tile_grid_shape" in meta:
         tile_mode = meta.get("tile_mode", "unknown")
         tile_shape_px = meta.get("tile_shape_px", None)
@@ -149,7 +160,7 @@ def _logbook_speckles(
         if notes:
             tile_labels = meta.get("tile_labels", None)
             if tile_labels is not None:
-                lines.append("- Tile order: row-major (NW, N, NE/W, C, E/SW, S, SE)")
+                lines.append("- Tile order: row-major (NW, N, NE; W, C, E; SW, S, SE)")
                 lines.append("")
                 lines.append("Tile labels:")
                 lines.append("```")

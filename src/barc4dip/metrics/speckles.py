@@ -364,6 +364,7 @@ def speckle_stats(
     *,
     metrics: str | Sequence[str] = "all",
     tiles: bool = False,
+    display_origin: Literal["upper", "lower"] = "lower",
     saturation_value: float | None = 65535.0,
     eps: float = 1e-6,
     verbose: bool = False,
@@ -387,6 +388,11 @@ def speckle_stats(
                 - aggregated from 9x9 sub-tiles (mean and std per 3x3 cell), or
                 - computed directly on 3x3 tiles (std returned as NaNs).
             Tiles are only computed if the implied tile size meets MIN_TILE_PX.
+        display_origin (Literal["upper", "lower"]):
+            Defines the vertical origin convention used for analysis.     
+                - "lower" (default): detector-aligned convention.   
+                - "upper": NumPy convention. Index (0, 0) is the
+                top-left pixel
         saturation_value (float | None):
             Passed to distribution_moments (default: 65535.0).
         eps (float):
@@ -416,6 +422,9 @@ def speckle_stats(
         raise TypeError("speckle_stats expects a numpy.ndarray")
     if image.ndim != 2:
         raise ValueError(f"Expected 2D array, got ndim={image.ndim}")
+    
+    if display_origin == "lower":
+        image = np.flip(image, axis=-2)
 
     h, w = image.shape
     groups = _normalize_metric_groups(metrics)
@@ -426,6 +435,7 @@ def speckle_stats(
     out: dict = {
         "meta": {
             "kind": "speckles",
+            "display_origin": display_origin,
             "input_shape": (int(h), int(w)),
             "requested_groups": sorted(groups),
         },

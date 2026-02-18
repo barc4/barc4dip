@@ -51,13 +51,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     p.add_argument(
-        "--f",
+        "-f",
         "--flat",
         dest="flat_path",
         default=None,
         help="Optional flat field image path.",
     )
     p.add_argument(
+        "-d",
         "--dark",
         dest="dark_path",
         default=None,
@@ -65,6 +66,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     p.add_argument(
+        "-o",
         "--out",
         dest="out_path",
         default=None,

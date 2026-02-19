@@ -6,7 +6,7 @@ from ._version import __version__
 
 from . import io, maths, metrics, plotting, preprocessing, signal, utils
 from .io import read_image, write_image
-from .metrics import distribution_moments, speckle_stats
+from .metrics import distribution_moments, speckle_stats, sharpness_stats
 from .report import logbook_report
 
 __all__ = [
@@ -23,6 +23,7 @@ __all__ = [
     "read_image",
     "write_image",
     "speckle_stats",
+    "sharpness_stats",
     "distribution_moments",
     "logbook_report",
 ]

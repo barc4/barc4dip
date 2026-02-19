@@ -14,12 +14,212 @@ import numpy as np
 
 from ..maths.radial import radial_mean_binned, radial_mean_interpolated
 from ..maths.stats import distance_at_fraction_from_peak, width_at_fraction
-from .statistics import distribution_moments
 from ..signal.corr import autocorr2d
 from ..signal.fft import psd2d
+from ..utils import elapsed_time, now
 from ..utils.range import percentile_minmax_range
+from .common import (
+    apply_display_origin,
+    choose_tiling_mode,
+    tiled_scalar_fields,
+    tiles_meta,
+)
+from .statistics import distribution_moments
 
 logger = logging.getLogger(__name__)
+
+
+def speckle_stats(
+    image: np.ndarray,
+    *,
+    metrics: str | Sequence[str] = "all",
+    tiles: bool = False,
+    display_origin: Literal["upper", "lower"] = "lower",
+    saturation_value: float | None = 65535.0,
+    eps: float = 1e-6,
+    verbose: bool = False,
+) -> dict:
+    """
+    Compute speckle metrics on a single 2D image.
+
+    Parameters:
+        image (np.ndarray):
+            2D speckle intensity image (H, W).
+        metrics (str | Sequence[str]):
+            Metric group(s) to compute:
+                - "amplitude"
+                - "grain"
+                - "bandwidth"
+                - "stats"
+                - "all" (default)
+        tiles (bool):
+            If True, also compute metrics on a 3x3 grid of tiles, where each
+            tile is either:
+                - aggregated from 9x9 sub-tiles (mean and std per 3x3 cell), or
+                - computed directly on 3x3 tiles (std returned as NaNs).
+            Tiles are only computed if the implied tile size meets MIN_TILE_PX.
+        display_origin (Literal["upper", "lower"]):
+            Defines the vertical origin convention used for analysis.
+                - "lower" (default): detector-aligned convention.
+                - "upper": NumPy convention. Index (0, 0) is the
+                top-left pixel
+        saturation_value (float | None):
+            Passed to distribution_moments (default: 65535.0).
+        eps (float):
+            Passed to distribution_moments (default: 1e-6).
+        verbose (bool):
+            Verbose output for full-frame metrics only. Tile computations force
+            verbose=False.
+
+    Returns:
+        dict:
+            Dictionary with:
+                - "full": dict of requested full-frame blocks.
+                - "tiles": dict of requested tile blocks (only if feasible).
+
+            Tile metrics are stored as:
+                {"mean": grid3x3, "std": grid3x3}
+
+            For direct 3x3 tiling, std_grid_3x3 is a 3x3 array of NaNs.
+
+    Raises:
+        TypeError:
+            If image is not a NumPy array.
+        ValueError:
+            If image is not 2D.
+    """
+    t0 = now()
+
+    if not isinstance(image, np.ndarray):
+        raise TypeError("speckle_stats expects a numpy.ndarray")
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D array, got ndim={image.ndim}")
+
+    image = apply_display_origin(image, display_origin=display_origin)
+
+    h, w = image.shape
+    groups = _normalize_metric_groups(metrics)
+
+    if verbose:
+        logger.info("\nspeckle stats for a (h x w: %.0f x %.0f) image:", h, w)
+
+    out: dict = {
+        "meta": {
+            "kind": "speckles",
+            "display_origin": display_origin,
+            "input_shape": (int(h), int(w)),
+            "requested_groups": sorted(groups),
+        },
+        "full": {},
+    }
+
+    if "amplitude" in groups:
+        out["full"]["amplitude"] = amplitude(image, verbose=verbose)
+
+    if "grain" in groups:
+        out["full"]["grain"] = grain(image, verbose=verbose)
+
+    if "stats" in groups:
+        try:
+            out["full"]["stats"] = distribution_moments(
+                image,
+                saturation_value=saturation_value,
+                eps=eps,
+                verbose=verbose,
+            )
+        except TypeError:
+            out["full"]["stats"] = distribution_moments(
+                image,
+                saturation_value=saturation_value,
+                eps=eps,
+            )
+
+    if "bandwidth" in groups:
+        out["full"]["bandwidth"] = bandwidth(image, verbose=verbose)
+
+    MIN_TILE_PX = 128
+    mode, tile_shape_px = choose_tiling_mode(h, w, tiles=tiles, min_tile_px=MIN_TILE_PX)
+    if mode == "off":
+        if verbose:
+            elapsed_time(t0)
+        return out
+
+    out["meta"].update(tiles_meta(h, w, tile_mode=mode, tile_shape_px=tile_shape_px))
+
+    tiles_out: dict = {}
+
+    if "amplitude" in groups:
+        def _amp_tile(tile: np.ndarray) -> dict[str, float]:
+            a = amplitude(tile, verbose=False)
+            return {
+                "visibility": float(a["visibility"]),
+                "contrast": float(a["contrast"]),
+            }
+
+        tiles_out["amplitude"] = tiled_scalar_fields(image, tile_mode=mode, compute_fn=_amp_tile)
+
+    if "grain" in groups:
+        def _grain_tile(tile: np.ndarray) -> dict[str, float]:
+            g = grain(tile, verbose=False)
+            return {
+                "lx": float(g["lx"]),
+                "ly": float(g["ly"]),
+                "leq": float(g["leq"]),
+                "r": float(g["r"]),
+            }
+
+        tiles_out["grain"] = tiled_scalar_fields(image, tile_mode=mode, compute_fn=_grain_tile)
+
+    if "stats" in groups:
+        def _stats_tile(tile: np.ndarray) -> dict[str, float]:
+            try:
+                d = distribution_moments(tile, saturation_value=saturation_value, eps=eps, verbose=False)
+            except TypeError:
+                d = distribution_moments(tile, saturation_value=saturation_value, eps=eps)
+            return {k: float(v) for k, v in d.items()}
+
+        tiles_out["stats"] = tiled_scalar_fields(image, tile_mode=mode, compute_fn=_stats_tile)
+
+    if "bandwidth" in groups:
+        def _bw_tile(tile: np.ndarray) -> dict[str, float]:
+            b = bandwidth(tile, verbose=False)
+            return {
+                "spr": float(b["spr"]),
+                "feq": float(b["feq"]),
+                "f95": float(b["f95"]),
+                "sig_fx": float(b["sig_fx"]),
+                "sig_fy": float(b["sig_fy"]),
+                "rf": float(b["rf"]),
+            }
+
+        tiles_out["bandwidth"] = tiled_scalar_fields(image, tile_mode=mode, compute_fn=_bw_tile)
+
+    if tiles_out:
+        out["tiles"] = tiles_out
+
+    if verbose:
+        elapsed_time(t0)
+
+    return out
+
+
+def _normalize_metric_groups(metrics: str | Sequence[str]) -> set[str]:
+    if isinstance(metrics, str):
+        m = metrics.strip().lower()
+        if m == "all":
+            return {"amplitude", "grain", "bandwidth", "stats"}
+        return {m}
+
+    groups: set[str] = set()
+    for item in metrics:
+        if not isinstance(item, str):
+            raise TypeError("metrics must be a str or a sequence of str")
+        m = item.strip().lower()
+        if m == "all":
+            groups.update({"amplitude", "grain", "bandwidth", "stats"})
+        else:
+            groups.add(m)
+    return groups
 
 # ---------------------------------------------------------------------------
 # Grain
@@ -354,343 +554,3 @@ def bandwidth(image: np.ndarray, verbose: bool = False) -> dict[str, float]:
         )
 
     return spectral
-
-# ---------------------------------------------------------------------------
-# Aggregator
-# ---------------------------------------------------------------------------
-
-def speckle_stats(
-    image: np.ndarray,
-    *,
-    metrics: str | Sequence[str] = "all",
-    tiles: bool = False,
-    display_origin: Literal["upper", "lower"] = "lower",
-    saturation_value: float | None = 65535.0,
-    eps: float = 1e-6,
-    verbose: bool = False,
-) -> dict:
-    """
-    Compute speckle metrics on a single 2D image.
-
-    Parameters:
-        image (np.ndarray):
-            2D speckle intensity image (H, W).
-        metrics (str | Sequence[str]):
-            Metric group(s) to compute:
-                - "amplitude"
-                - "grain"
-                - "bandwidth"
-                - "stats"
-                - "all" (default)
-        tiles (bool):
-            If True, also compute metrics on a 3x3 grid of tiles, where each
-            tile is either:
-                - aggregated from 9x9 sub-tiles (mean and std per 3x3 cell), or
-                - computed directly on 3x3 tiles (std returned as NaNs).
-            Tiles are only computed if the implied tile size meets MIN_TILE_PX.
-        display_origin (Literal["upper", "lower"]):
-            Defines the vertical origin convention used for analysis.     
-                - "lower" (default): detector-aligned convention.   
-                - "upper": NumPy convention. Index (0, 0) is the
-                top-left pixel
-        saturation_value (float | None):
-            Passed to distribution_moments (default: 65535.0).
-        eps (float):
-            Passed to distribution_moments (default: 1e-6).
-        verbose (bool):
-            Verbose output for full-frame metrics only. Tile computations force
-            verbose=False.
-
-    Returns:
-        dict:
-            Dictionary with:
-                - "full": dict of requested full-frame blocks.
-                - "tiles": dict of requested tile blocks (only if feasible).
-
-            Tile metrics are stored as:
-                (mean_grid_3x3, std_grid_3x3)
-
-            For direct 3x3 tiling, std_grid_3x3 is a 3x3 array of NaNs.
-
-    Raises:
-        TypeError:
-            If image is not a NumPy array.
-        ValueError:
-            If image is not 2D.
-    """
-    if not isinstance(image, np.ndarray):
-        raise TypeError("speckle_stats expects a numpy.ndarray")
-    if image.ndim != 2:
-        raise ValueError(f"Expected 2D array, got ndim={image.ndim}")
-    
-    if display_origin == "lower":
-        image = np.flip(image, axis=-2)
-
-    h, w = image.shape
-    groups = _normalize_metric_groups(metrics)
-
-    if verbose:
-        logger.info("\nspeckle stats for a (h x w: %.0f x %.0f) image:", h, w)
-
-    out: dict = {
-        "meta": {
-            "kind": "speckles",
-            "display_origin": display_origin,
-            "input_shape": (int(h), int(w)),
-            "requested_groups": sorted(groups),
-        },
-        "full": {},
-    }
-
-    if "amplitude" in groups:
-        out["full"]["amplitude"] = amplitude(image, verbose=verbose)
-
-    if "grain" in groups:
-        out["full"]["grain"] = grain(image, verbose=verbose)
-
-    if "stats" in groups:
-        try:
-            out["full"]["stats"] = distribution_moments(
-                image,
-                saturation_value=saturation_value,
-                eps=eps,
-                verbose=verbose,
-            )
-        except TypeError:
-            out["full"]["stats"] = distribution_moments(
-                image,
-                saturation_value=saturation_value,
-                eps=eps,
-            )
-
-    if "bandwidth" in groups:
-        out["full"]["bandwidth"] = bandwidth(image, verbose=verbose)
-
-    if not tiles:
-        return out
-
-    MIN_TILE_PX = 128
-    mode = _choose_tiling_mode(h, w, min_tile_px=MIN_TILE_PX)
-    if mode == "off":
-        return out
-
-    out["meta"].update(
-        {
-            "tile_grid_shape": (3, 3),
-            "tile_labels": [["NW", "N", "NE"], ["W", "C", "E"], ["SW", "S", "SE"]],
-            "tile_order": "row-major",
-            "tile_mode": mode,
-            "tile_shape_px": (
-                int(h // 9),
-                int(w // 9),
-            )
-            if mode == "subtiles_9x9"
-            else (
-                int(h // 3),
-                int(w // 3),
-            ),
-        }
-    )
-
-    tiles_out: dict = {}
-
-    def _nan_std_grid() -> np.ndarray:
-        return np.full((3, 3), np.nan, dtype=float)
-
-    def _pack(mean: np.ndarray, std: np.ndarray) -> dict:
-        return {"mean": mean, "std": std}
-
-    if mode == "subtiles_9x9":
-        sub_edges_y = _split_edges(h, 9)
-        sub_edges_x = _split_edges(w, 9)
-
-        if "amplitude" in groups:
-            vis_sub = np.empty((9, 9), dtype=float)
-            con_sub = np.empty((9, 9), dtype=float)
-
-        if "grain" in groups:
-            g_sub = {k: np.empty((9, 9), dtype=float) for k in ("lx", "ly", "leq", "r")}
-
-        stats_sub: dict[str, np.ndarray] | None = None
-
-        if "bandwidth" in groups:
-            bw_sub = {k: np.empty((9, 9), dtype=float) for k in ("spr", "feq", "f95", "sig_fx", "sig_fy", "rf")}
-
-        for ry in range(9):
-            y0, y1 = sub_edges_y[ry], sub_edges_y[ry + 1]
-            for rx in range(9):
-                x0, x1 = sub_edges_x[rx], sub_edges_x[rx + 1]
-                tile = image[y0:y1, x0:x1]
-
-                if "amplitude" in groups:
-                    a = amplitude(tile, verbose=False)
-                    vis_sub[ry, rx] = float(a["visibility"])
-                    con_sub[ry, rx] = float(a["contrast"])
-
-                if "grain" in groups:
-                    g = grain(tile, verbose=False)
-                    for k in g_sub:
-                        g_sub[k][ry, rx] = float(g[k])
-
-                if "stats" in groups:
-                    try:
-                        d = distribution_moments(tile, saturation_value=saturation_value, eps=eps, verbose=False)
-                    except TypeError:
-                        d = distribution_moments(tile, saturation_value=saturation_value, eps=eps)
-
-                    if stats_sub is None:
-                        stats_sub = {k: np.empty((9, 9), dtype=float) for k in d.keys()}
-                    for k, v in d.items():
-                        stats_sub[k][ry, rx] = float(v)
-
-                if "bandwidth" in groups:
-                    b = bandwidth(tile, verbose=False)
-                    for k in bw_sub:
-                        bw_sub[k][ry, rx] = float(b[k])
-
-        if "amplitude" in groups:
-            m, s = _aggregate_subtiles(vis_sub)
-            tiles_out.setdefault("amplitude", {})["visibility"] = _pack(m, s)
-            m, s = _aggregate_subtiles(con_sub)
-            tiles_out["amplitude"]["contrast"] = _pack(m, s)
-
-        if "grain" in groups:
-            gt = tiles_out.setdefault("grain", {})
-            for k, arr in g_sub.items():
-                m, s = _aggregate_subtiles(arr)
-                gt[k] = _pack(m, s)
-
-        if "stats" in groups and stats_sub is not None:
-            st = tiles_out.setdefault("stats", {})
-            for k, arr in stats_sub.items():
-                m, s = _aggregate_subtiles(arr)
-                st[k] = _pack(m, s)
-
-        if "bandwidth" in groups:
-            bt = tiles_out.setdefault("bandwidth", {})
-            for k, arr in bw_sub.items():
-                m, s = _aggregate_subtiles(arr)
-                bt[k] = _pack(m, s)
-
-    elif mode == "tiles_3x3":
-        edges_y = _split_edges(h, 3)
-        edges_x = _split_edges(w, 3)
-
-        if "amplitude" in groups:
-            vis = np.empty((3, 3), dtype=float)
-            con = np.empty((3, 3), dtype=float)
-
-        if "grain" in groups:
-            g3 = {k: np.empty((3, 3), dtype=float) for k in ("lx", "ly", "leq", "r")}
-
-        stats3: dict[str, np.ndarray] | None = None
-
-        if "bandwidth" in groups:
-            bw3 = {k: np.empty((3, 3), dtype=float) for k in ("spr", "feq", "f95", "sig_fx", "sig_fy", "rf")}
-
-        for ty in range(3):
-            y0, y1 = edges_y[ty], edges_y[ty + 1]
-            for tx in range(3):
-                x0, x1 = edges_x[tx], edges_x[tx + 1]
-                tile = image[y0:y1, x0:x1]
-
-                if "amplitude" in groups:
-                    a = amplitude(tile, verbose=False)
-                    vis[ty, tx] = float(a["visibility"])
-                    con[ty, tx] = float(a["contrast"])
-
-                if "grain" in groups:
-                    g = grain(tile, verbose=False)
-                    for k in g3:
-                        g3[k][ty, tx] = float(g[k])
-
-                if "stats" in groups:
-                    try:
-                        d = distribution_moments(tile, saturation_value=saturation_value, eps=eps, verbose=False)
-                    except TypeError:
-                        d = distribution_moments(tile, saturation_value=saturation_value, eps=eps)
-
-                    if stats3 is None:
-                        stats3 = {k: np.empty((3, 3), dtype=float) for k in d.keys()}
-                    for k, v in d.items():
-                        stats3[k][ty, tx] = float(v)
-
-                if "bandwidth" in groups:
-                    b = bandwidth(tile, verbose=False)
-                    for k in bw3:
-                        bw3[k][ty, tx] = float(b[k])
-
-        if "amplitude" in groups:
-            tiles_out.setdefault("amplitude", {})["visibility"] = _pack(vis, _nan_std_grid())
-            tiles_out["amplitude"]["contrast"] = _pack(con, _nan_std_grid())
-
-        if "grain" in groups:
-            gt = tiles_out.setdefault("grain", {})
-            for k, arr in g3.items():
-                gt[k] = _pack(arr, _nan_std_grid())
-
-        if "stats" in groups and stats3 is not None:
-            st = tiles_out.setdefault("stats", {})
-            for k, arr in stats3.items():
-                st[k] = _pack(arr, _nan_std_grid())
-
-        if "bandwidth" in groups:
-            bt = tiles_out.setdefault("bandwidth", {})
-            for k, arr in bw3.items():
-                bt[k] = _pack(arr, _nan_std_grid())
-
-    else:
-        raise RuntimeError(f"Unknown tiling mode: {mode!r}")
-
-    if tiles_out:
-        out["tiles"] = tiles_out
-    return out
-
-
-def _normalize_metric_groups(metrics: str | Sequence[str]) -> set[str]:
-    if isinstance(metrics, str):
-        m = metrics.strip().lower()
-        if m == "all":
-            return {"amplitude", "grain", "bandwidth", "stats"}
-        return {m}
-
-    groups: set[str] = set()
-    for item in metrics:
-        if not isinstance(item, str):
-            raise TypeError("metrics must be a str or a sequence of str")
-        m = item.strip().lower()
-        if m == "all":
-            groups.update({"amplitude", "grain", "bandwidth", "stats"})
-        else:
-            groups.add(m)
-    return groups
-
-
-def _split_edges(length: int, n_parts: int) -> np.ndarray:
-    return np.linspace(0, int(length), int(n_parts) + 1, dtype=int)
-
-
-def _choose_tiling_mode(h: int, w: int, *, min_tile_px: int = 128) -> str:
-    if h < 1 or w < 1:
-        return "off"
-
-    if (h // 9) >= min_tile_px and (w // 9) >= min_tile_px:
-        return "subtiles_9x9"
-
-    if (h // 3) >= min_tile_px and (w // 3) >= min_tile_px:
-        return "tiles_3x3"
-
-    return "off"
-
-
-def _aggregate_subtiles(sub: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-
-    sub = np.asarray(sub, dtype=float)
-    mean = np.empty((3, 3), dtype=float)
-    std = np.empty((3, 3), dtype=float)
-    for by in range(3):
-        for bx in range(3):
-            block = sub[by * 3 : (by + 1) * 3, bx * 3 : (bx + 1) * 3].ravel()
-            mean[by, bx] = float(np.mean(block))
-            std[by, bx] = float(np.std(block, ddof=0))
-    return mean, std

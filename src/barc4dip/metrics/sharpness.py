@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: CECILL-2.1
 # Copyright (c) 2026 ESRF - the European Synchrotron
 """
-See metrics in:
+Sharpness metrics.
 
+Refer to:
 S. Pertuz, D. Puig, and M. A. Garcia, 
 "Analysis of focus measure operators for shape-from-focus," 
-Pattern Recognition 46(5), 1415–1432 (2013). 
+Pattern Recognition 46(5), 1415-1432 (2013). 
 """
 
 
@@ -21,63 +22,238 @@ from ..maths.radial import radial_mean_binned, radial_mean_interpolated
 from ..maths.stats import distance_at_fraction_from_peak, width_at_fraction
 from ..signal.corr import autocorr2d
 from ..signal.fft import psd2d
+from ..utils import elapsed_time, now
+from .common import (
+    apply_display_origin,
+    choose_tiling_mode,
+    tiled_scalar_fields,
+    tiles_meta,
+)
+from .statistics import distribution_moments
 
 logger = logging.getLogger(__name__)
 
-
-
-
-def variance(
+def sharpness_stats(
     image: np.ndarray,
     *,
+    metrics: str | Sequence[str] = "all",
+    tiles: bool = False,
+    display_origin: Literal["upper", "lower"] = "lower",
+    saturation_value: float | None = 65535.0,
+    eps: float = 1e-6,
     verbose: bool = False,
-) -> float:
+) -> dict:
     """
-    (STA3)
-    Compute the population variance of a 2D intensity image.
+    Compute sharpness metrics on a single 2D image.
 
-    The variance is defined as:
-
-        var = mean((I - mean(I))^2)
-
-    using ddof=0 (population definition). Only finite values are considered.
+    This aggregator mirrors the ergonomics and return schema of speckle_stats:
+        - full-frame metrics under out["full"]
+        - optional 3x3 tile metrics under out["tiles"] (same mean/std grid schema)
+        - tiling policy, labels/order, and display_origin handling are delegated to
+          the common tiling utilities.
 
     Parameters:
         image (np.ndarray):
-            2D array of intensities. Values are treated as a flat sample.
-            Scaling and dtype conversion are assumed to be handled upstream.
+            2D intensity image (H, W).
+        metrics (str | Sequence[str]):
+            Metric group(s) to compute:
+                - "stats"
+                - "gradient"
+                - "laplacian"
+                - "spectral"
+                - "autocorrelation"
+                - "eigenvalues"
+                - "all" (default)
+        tiles (bool):
+            If True, also compute metrics on a 3x3 grid of tiles, where each
+            tile is either:
+                - aggregated from 9x9 sub-tiles (mean and std per 3x3 cell), or
+                - computed directly on 3x3 tiles (std returned as NaNs).
+            Tiles are only computed if the implied tile size meets MIN_TILE_PX
+            under the common tiling policy.
+        display_origin (Literal["upper", "lower"]):
+            Defines the vertical origin convention used for analysis.
+                - "lower" (default): detector-aligned convention.
+                - "upper": NumPy convention. Index (0, 0) is the top-left pixel.
+        saturation_value (float | None):
+            Passed to distribution_moments for stats (default: 65535.0).
+        eps (float):
+            Passed to distribution_moments for stats (default: 1e-6).
         verbose (bool):
-            If True, emit a concise summary via the logging subsystem
-            at INFO level. Default is False.
+            Verbose output for full-frame metrics only. Tile computations force
+            verbose=False.
 
     Returns:
-        float:
-            Population variance of the finite intensity values.
+        dict:
+            Dictionary with:
+                - "meta": metadata (including tiling metadata if tiles are computed)
+                - "full": dict of requested full-frame blocks
+                - "tiles": dict of requested tile blocks (only if feasible)
+
+            Tile metrics are stored as:
+                {"mean": grid3x3, "std": grid3x3}
+
+            For direct 3x3 tiling, std_grid_3x3 is a 3x3 array of NaNs.
 
     Raises:
+        TypeError:
+            If image is not a NumPy array.
         ValueError:
-            If image is empty, has ndim != 2, or contains no finite values.
+            If image is not 2D.
     """
-    data = np.asarray(image)
+    t0 = now()
 
-    if data.ndim != 2:
-        raise ValueError(f"Expected 2D array, got ndim={data.ndim}")
+    if not isinstance(image, np.ndarray):
+        raise TypeError("sharpness_stats expects a numpy.ndarray")
+    if image.ndim != 2:
+        raise ValueError(f"Expected 2D array, got ndim={image.ndim}")
 
-    if data.size == 0:
-        raise ValueError("variance received an empty image.")
+    # Orientation ergonomics (shared across all metric aggregators).
+    image = apply_display_origin(image, display_origin=display_origin)
 
-    finite = np.isfinite(data)
-    if not np.any(finite):
-        raise ValueError("variance received image with no finite values.")
-
-    values = data[finite]
-    var = float(np.var(values, ddof=0))
+    h, w = image.shape
+    groups = _normalize_sharpness_groups(metrics)
 
     if verbose:
-        logger.info("> variance: %.6g", var)
+        logger.info("\nsharpness stats for a (h x w: %.0f x %.0f) image:", h, w)
 
-    return var
+    out: dict = {
+        "meta": {
+            "kind": "sharpness",
+            "display_origin": display_origin,
+            "input_shape": (int(h), int(w)),
+            "requested_groups": sorted(groups),
+        },
+        "full": {},
+    }
 
+    # --- full-frame ---
+    if "stats" in groups:
+        try:
+            out["full"]["stats"] = distribution_moments(
+                image,
+                saturation_value=saturation_value,
+                eps=eps,
+                verbose=verbose,
+            )
+        except TypeError:
+            out["full"]["stats"] = distribution_moments(
+                image,
+                saturation_value=saturation_value,
+                eps=eps,
+            )
+
+    if "gradient" in groups:
+        out["full"]["gradient"] = tenengrad(image, verbose=verbose)
+
+    if "laplacian" in groups:
+        out["full"]["laplacian"] = {"laplacian_variance": laplacian_variance(image, verbose=verbose)}
+
+    if "spectral" in groups:
+        out["full"]["spectral"] = {"spectral_entropy": spectral_entropy(image, verbose=verbose)}
+
+    if "autocorrelation" in groups:
+        out["full"]["autocorrelation"] = inverse_autocorr_width(image, verbose=verbose)
+
+    if "eigenvalues" in groups:
+        out["full"]["eigenvalues"] = eigenvalues(image, verbose=verbose)
+
+    # --- tiles (same policy as speckle_stats via common.py) ---
+    MIN_TILE_PX = 128
+    mode, tile_shape_px = choose_tiling_mode(h, w, tiles=tiles, min_tile_px=MIN_TILE_PX)
+    if mode == "off":
+        if verbose:
+            elapsed_time(t0)
+        return out
+
+    out["meta"].update(tiles_meta(h, w, tile_mode=mode, tile_shape_px=tile_shape_px))
+
+    tiles_out: dict = {}
+
+    if "stats" in groups:
+        def _stats_tile(tile: np.ndarray) -> dict[str, float]:
+            try:
+                d = distribution_moments(tile, saturation_value=saturation_value, eps=eps, verbose=False)
+            except TypeError:
+                d = distribution_moments(tile, saturation_value=saturation_value, eps=eps)
+            return {k: float(v) for k, v in d.items()}
+
+        tiles_out["stats"] = tiled_scalar_fields(image, tile_mode=mode, compute_fn=_stats_tile)
+
+    if "gradient" in groups:
+        def _grad_tile(tile: np.ndarray) -> dict[str, float]:
+            g = tenengrad(tile, verbose=False)
+            return {
+                "tenengrad": float(g["tenengrad"]),
+                "ex": float(g["ex"]),
+                "ey": float(g["ey"]),
+                "re": float(g["re"]),
+            }
+
+        tiles_out["gradient"] = tiled_scalar_fields(image, tile_mode=mode, compute_fn=_grad_tile)
+
+    if "laplacian" in groups:
+        def _lap_tile(tile: np.ndarray) -> dict[str, float]:
+            return {"laplacian_variance": float(laplacian_variance(tile, verbose=False))}
+
+        tiles_out["laplacian"] = tiled_scalar_fields(image, tile_mode=mode, compute_fn=_lap_tile)
+
+    if "spectral" in groups:
+        def _spec_tile(tile: np.ndarray) -> dict[str, float]:
+            return {"spectral_entropy": float(spectral_entropy(tile, verbose=False))}
+
+        tiles_out["spectral"] = tiled_scalar_fields(image, tile_mode=mode, compute_fn=_spec_tile)
+
+    if "autocorrelation" in groups:
+        def _ac_tile(tile: np.ndarray) -> dict[str, float]:
+            a = inverse_autocorr_width(tile, verbose=False)
+            return {
+                "sx": float(a["sx"]),
+                "sy": float(a["sy"]),
+                "seq": float(a["seq"]),
+                "r": float(a["r"]),
+            }
+
+        tiles_out["autocorrelation"] = tiled_scalar_fields(image, tile_mode=mode, compute_fn=_ac_tile)
+
+    if "eigenvalues" in groups:
+        def _eig_tile(tile: np.ndarray) -> dict[str, float]:
+            e = eigenvalues(tile, verbose=False)
+            return {
+                "eigenvalues": float(e["eigenvalues"]),
+                "e1": float(e["e1"]),
+                "e2": float(e["e2"]),
+                "re": float(e["re"]),
+            }
+
+        tiles_out["eigenvalues"] = tiled_scalar_fields(image, tile_mode=mode, compute_fn=_eig_tile)
+
+    if tiles_out:
+        out["tiles"] = tiles_out
+
+    if verbose:
+        elapsed_time(t0)
+
+    return out
+
+
+def _normalize_sharpness_groups(metrics: str | Sequence[str]) -> set[str]:
+    if isinstance(metrics, str):
+        m = metrics.strip().lower()
+        if m == "all":
+            return {"stats", "gradient", "laplacian", "spectral", "autocorrelation", "eigenvalues"}
+        return {m}
+
+    groups: set[str] = set()
+    for item in metrics:
+        if not isinstance(item, str):
+            raise TypeError("metrics must be a str or a sequence of str")
+        m = item.strip().lower()
+        if m == "all":
+            groups.update({"stats", "gradient", "laplacian", "spectral", "autocorrelation", "eigenvalues"})
+        else:
+            groups.add(m)
+    return groups
 
 def tenengrad(
     image: np.ndarray,
@@ -398,7 +574,6 @@ def inverse_autocorr_width(
     ly_px = float(ly_px)
     leq_px = float(leq_px)
 
-    # Keep grain() convention for anisotropy in width domain.
     r_aniso = float(lx_px / ly_px) if ly_px != 0.0 else float("inf")
 
     out = {

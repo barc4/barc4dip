@@ -429,7 +429,6 @@ def _append_tiles_pair(
     if Lm.shape != (3, 3) or Ls.shape != (3, 3):
         return
 
-    # Single-matrix mode
     if key_right is None:
         matrix_lines = _format_single_matrix(Lm, Ls, fmt_left)
         lines.append(title_left)

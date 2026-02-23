@@ -373,6 +373,344 @@ def _logbook_speckles(
     return "\n".join(lines).rstrip() + "\n"
 
 
+@_register("sharpness")
+def _logbook_sharpness(
+    stats: dict,
+    *,
+    complete: bool = False,
+    notes: bool = False,
+) -> str:
+    meta = stats.get("meta")
+    full = stats.get("full")
+    if not isinstance(meta, dict) or not isinstance(full, dict):
+        raise ValueError("stats must contain dict keys 'meta' and 'full'")
+
+    tiles = stats.get("tiles") if isinstance(stats.get("tiles"), dict) else None
+
+    lines: list[str] = []
+    lines.append("# Sharpness summary")
+    lines.append(f"{datetime.fromtimestamp(now()).strftime('%Y-%m-%d | %H:%M:%S')}")
+    lines.append("")
+
+    lines.append("## Metadata")
+
+    input_shape = meta.get("input_shape", None)
+    if (
+        isinstance(input_shape, (tuple, list))
+        and len(input_shape) == 2
+        and all(isinstance(v, (int, np.integer)) for v in input_shape)
+    ):
+        lines.append(f"- Image shape: {int(input_shape[0])} x {int(input_shape[1])} px")
+    else:
+        lines.append("- Image shape: (unknown)")
+
+    display_origin = meta.get("display_origin", "unknown")
+
+    convention_map = {
+        "lower": "detector-aligned, origin at bottom-left",
+        "upper": "numpy-aligned, origin at top-left",
+    }
+
+    convention = convention_map.get(display_origin, "unknown")
+
+    lines.append(f"- Image orientation: {display_origin} ({convention})")
+
+    if "tile_grid_shape" in meta:
+        tile_mode = meta.get("tile_mode", "unknown")
+        tile_shape_px = meta.get("tile_shape_px", None)
+        if (
+            isinstance(tile_shape_px, (tuple, list))
+            and len(tile_shape_px) == 2
+            and all(isinstance(v, (int, np.integer)) for v in tile_shape_px)
+        ):
+            lines.append(
+                f"- Tiles: {tile_mode}, tile shape: {int(tile_shape_px[0])} x {int(tile_shape_px[1])} px"
+            )
+        else:
+            lines.append(f"- Tiles: {tile_mode}")
+        if notes:
+            tile_labels = meta.get("tile_labels", None)
+            if tile_labels is not None:
+                lines.append("- Tile order: row-major (NW, N, NE; W, C, E; SW, S, SE)")
+                lines.append("")
+                lines.append("Tile labels:")
+                lines.append("```")
+                lines.extend(_format_tile_labels(tile_labels))
+                lines.append("```")
+
+    lines.append("")
+
+    if "stats" in full:
+        s = full["stats"]
+        lines.append("## Moments (full image)")
+        lines.append("```")
+        lines.append(
+            f"> moments: mean={_f(s.get('mean'), 0)} | std={_f(s.get('std'), 0)} | "
+            f"var={_f(s.get('var'), 0)} | skew={_f(s.get('skewness'), 2)} | "
+            f"kurt={_f(s.get('kurtosis'), 2)} | SNR={_f(s.get('SNRdB'), 2)} dB"
+        )
+        lines.append("```")
+        lines.append("")
+
+        _append_tiles_pair(
+            lines,
+            tiles,
+            group="stats",
+            key_left="mean",
+            title_left="Mean (tiles)",
+            fmt_left=("{:.0f}", "{:.0f}"),
+            key_right="std",
+            title_right="Std (tiles)",
+            fmt_right=("{:.0f}", "{:.0f}"),
+        )
+
+        if complete:
+            _append_tiles_pair(
+                lines,
+                tiles,
+                group="stats",
+                key_left="skewness",
+                title_left="Skewness (tiles)",
+                fmt_left=("{:.2f}", "{:.2f}"),
+                key_right="kurtosis",
+                title_right="Kurtosis (tiles)",
+                fmt_right=("{:.2f}", "{:.2f}"),
+            )
+
+            _append_tiles_pair(
+                lines,
+                tiles,
+                group="stats",
+                key_left="SNRdB",
+                title_left="SNR dB (tiles)",
+                fmt_left=("{:.2f}", "{:.2f}"),
+                key_right="var",
+                title_right="Variance (tiles)",
+                fmt_right=("{:.0f}", "{:.0f}"),
+            )
+
+        if notes:
+            lines.append("Notes: ")
+            lines.append(" - units in gray scale (uint16)")
+            lines.append(" - std/var quantify fluctuation amplitude; larger -> stronger modulation")
+            lines.append(" - skew/kurtosis indicate deviation from Gaussian statistics (0 = Gaussian noise)")
+            lines.append(" - sSNR dB = 20·log10(mean/std); lower -> stronger relative fluctuations;")
+            lines.append("")
+
+    if "gradient" in full:
+        g = full["gradient"]
+        lines.append("## Tenengrad (full image)")
+        lines.append("```")
+        lines.append(
+            f"> tenengrad: {_f(g.get('tenengrad'), 1)} | ex: {_f(g.get('ex'), 1)} | "
+            f"ey: {_f(g.get('ey'), 1)} | ex/ey: {_f(g.get('re'), 3)}"
+        )
+        lines.append("```")
+        lines.append("")
+
+        _append_tiles_pair(
+            lines,
+            tiles,
+            group="gradient",
+            key_left="tenengrad",
+            title_left="Tenengrad (tiles)",
+            fmt_left=("{:.1f}", "{:.1f}"),
+            key_right=None,
+            title_right=None,
+            fmt_right=None,
+        )
+
+        if complete:
+            _append_tiles_pair(
+                lines,
+                tiles,
+                group="gradient",
+                key_left="ex",
+                title_left="ex (tiles)",
+                fmt_left=("{:.1f}", "{:.1f}"),
+                key_right="ey",
+                title_right="ey (tiles)",
+                fmt_right=("{:.1f}", "{:.1f}"),
+            )
+            _append_tiles_pair(
+                lines,
+                tiles,
+                group="gradient",
+                key_left="re",
+                title_left="ex/ey (tiles)",
+                fmt_left=("{:.3f}", "{:.3f}"),
+                key_right=None,
+                title_right=None,
+                fmt_right=None,
+            )
+
+        if notes:
+            lines.append("Notes: ")
+            lines.append(" - Sobel gradient energy: mean(Gx^2 + Gy^2)")
+            lines.append(" - ex and ey are directional gradient energies (mean(Gx^2), mean(Gy^2))")
+            lines.append(" - higher -> stronger spatial gradients and sharper local transitions")
+            lines.append("")
+
+    if "laplacian" in full:
+        l = full["laplacian"]
+        lines.append("## Laplacian (full image)")
+        lines.append("```")
+        lines.append(f"> laplacian variance: {_f(l.get('laplacian_variance'), 1)}")
+        lines.append("```")
+        lines.append("")
+
+        _append_tiles_pair(
+            lines,
+            tiles,
+            group="laplacian",
+            key_left="laplacian_variance",
+            title_left="Laplacian variance (tiles)",
+            fmt_left=("{:.1f}", "{:.1f}"),
+            key_right=None,
+            title_right=None,
+            fmt_right=None,
+        )
+
+        if notes:
+            lines.append("Notes: ")
+            lines.append(" - variance of Laplacian (second-derivative focus operator)")
+            lines.append(" - higher -> stronger fine-scale detail; may increase with high-frequency noise")
+            lines.append("")
+
+    if "spectral" in full:
+        sp = full["spectral"]
+        lines.append("## Spectral entropy (full image)")
+        lines.append("```")
+        lines.append(f"> spectral_entropy: {_f(sp.get('spectral_entropy'), 6)}")
+        lines.append("```")
+        lines.append("")
+
+        _append_tiles_pair(
+            lines,
+            tiles,
+            group="spectral",
+            key_left="spectral_entropy",
+            title_left="Spectral entropy (tiles)",
+            fmt_left=("{:.6f}", "{:.6f}"),
+            key_right=None,
+            title_right=None,
+            fmt_right=None,
+        )
+
+        if notes:
+            lines.append("Notes: ")
+            lines.append(" - Shannon entropy applied to the normalized 2D PSD (dimensionless)")
+            lines.append(" - higher -> flatter/broader spectrum; lower -> more concentrated spectrum")
+            lines.append("")
+
+    if "autocorrelation" in full:
+        a = full["autocorrelation"]
+        sx = a.get("sx")
+        sy = a.get("sy")
+        ratio = None
+        try:
+            ratio = float(sx) / float(sy)
+        except Exception:
+            ratio = None
+
+        lines.append("## Inverse autocorrelation width (full image)")
+        lines.append("```")
+        lines.append(
+            f"> inv_ac_width: sx={_f(sx, 4)} | sy={_f(sy, 4)} | "
+            f"sx/sy={_f(ratio, 3)} | seq={_f(a.get('seq'), 4)} | r(lx/ly)={_f(a.get('r'), 3)}"
+        )
+        lines.append("```")
+        lines.append("")
+
+        _append_tiles_pair(
+            lines,
+            tiles,
+            group="autocorrelation",
+            key_left="sx",
+            title_left="sx (tiles)",
+            fmt_left=("{:.4f}", "{:.4f}"),
+            key_right="sy",
+            title_right="sy (tiles)",
+            fmt_right=("{:.4f}", "{:.4f}"),
+        )
+
+        if complete:
+            _append_tiles_pair(
+                lines,
+                tiles,
+                group="autocorrelation",
+                key_left="seq",
+                title_left="seq (tiles)",
+                fmt_left=("{:.4f}", "{:.4f}"),
+                key_right="r",
+                title_right="r(lx/ly) (tiles)",
+                fmt_right=("{:.3f}", "{:.3f}"),
+            )
+
+        if notes:
+            lines.append("Notes: ")
+            lines.append(" - computed from normalized autocorrelation peak widths (1/e)")
+            lines.append(" - sx, sy, seq are inverse widths (1/pixel).")
+            lines.append(" - larger -> smaller correlation length (finer spatial features)")
+            lines.append(" - r(lx/ly) is an anisotropy ratio in the width domain")
+            lines.append("")
+
+    if "eigenvalues" in full:
+        e = full["eigenvalues"]
+        lines.append("## Eigenvalues (full image)")
+        lines.append("```")
+        lines.append(
+            f"> eigenvalues: {_f(e.get('eigenvalues'), 6)} | e1: {_f(e.get('e1'), 6)} | "
+            f"e2: {_f(e.get('e2'), 6)} | e1/e2: {_f(e.get('re'), 3)}"
+        )
+        lines.append("```")
+        lines.append("")
+
+        _append_tiles_pair(
+            lines,
+            tiles,
+            group="eigenvalues",
+            key_left="eigenvalues",
+            title_left="Sum eigenvalues (tiles)",
+            fmt_left=("{:.6g}", "{:.6g}"),
+            key_right=None,
+            title_right=None,
+            fmt_right=None,
+        )
+
+        if complete:
+            _append_tiles_pair(
+                lines,
+                tiles,
+                group="eigenvalues",
+                key_left="e1",
+                title_left="e1 (tiles)",
+                fmt_left=("{:.6g}", "{:.6g}"),
+                key_right="e2",
+                title_right="e2 (tiles)",
+                fmt_right=("{:.6g}", "{:.6g}"),
+            )
+            _append_tiles_pair(
+                lines,
+                tiles,
+                group="eigenvalues",
+                key_left="re",
+                title_left="e1/e2 (tiles)",
+                fmt_left=("{:.3f}", "{:.3f}"),
+                key_right=None,
+                title_right=None,
+                fmt_right=None,
+            )
+
+        if notes:
+            lines.append("Notes: ")
+            lines.append(" - sum of leading structure-tensor eigenvalues at smoothing scale k")
+            lines.append(" - larger -> stronger directional gradient energy (scale-dependent)")
+            lines.append(" - e1/e2 is a simple anisotropy proxy")
+            lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
 def _f(x: object, ndigits: int) -> str:
     if x is None:
         return "nan"

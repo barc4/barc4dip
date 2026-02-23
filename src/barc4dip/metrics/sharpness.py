@@ -437,7 +437,7 @@ def spectral_entropy(
     if remove_mean:
         x = x - float(np.mean(x))
 
-    _fx, _fy, P = psd2d(x, scale=False)
+    P, _fx, _fy = psd2d(x, scale=False)
     P = np.asarray(P, dtype=float)
 
     if np.any(P < 0):
@@ -552,18 +552,18 @@ def inverse_autocorr_width(
     lx_px, _lx_hit_edge = width_at_fraction(x_cut, fraction=fraction, center_index=ix)
 
     if radial_method == "binned":
-        rad, rr = radial_mean_binned(ac)
+        rad, r = radial_mean_interpolated(ac)
     elif radial_method == "interpolated":
-        rad, rr = radial_mean_interpolated(ac)
+        rad, r = radial_mean_interpolated(ac)
     else:
         raise ValueError("radial_method must be 'binned' or 'interpolated'.")
 
     rad = np.asarray(rad, dtype=float)
-    rr = np.asarray(rr, dtype=float)
-    if rad.size < 2 or rr.size < 2:
+    r = np.asarray(r, dtype=float)
+    if rad.size < 2 or r.size < 2:
         raise ValueError("Radial profile is too short to estimate equivalent width.")
 
-    dr = float(rr[1] - rr[0])
+    dr = float(r[1] - r[0])
     if dr <= 0.0:
         raise ValueError("Invalid radial sampling (non-positive dr).")
 
@@ -633,6 +633,9 @@ def eigenvalues(
             2D intensity image. Must contain only finite values.
         k (int):
             Number of leading eigenvalues to sum (default: 5).
+            Too small -> noise-dominated
+            Too large -> oversmoothing, anisotropy washed out
+            When applying it to the speckle fields, choose k~grain/2 
         eps (float):
             Small positive number used to guard divisions and degenerate cases
             (default: 1e-30).

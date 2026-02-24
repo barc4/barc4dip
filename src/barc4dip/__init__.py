@@ -4,7 +4,7 @@
 from __future__ import annotations
 from ._version import __version__
 
-from . import io, maths, metrics, plotting, preprocessing, signal, utils
+from . import io, maths, metrics, plotting, preprocessing, signal, utils, geometry
 from .io import read_image, write_image
 from .metrics import distribution_moments, speckle_stats, sharpness_stats
 from .report import logbook_report
@@ -19,6 +19,7 @@ __all__ = [
     "preprocessing",
     "signal",
     "utils",
+    "geometry",
     # curated functions
     "read_image",
     "write_image",

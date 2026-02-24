@@ -3,22 +3,15 @@
 
 from __future__ import annotations
 
-from . import fft, corr
-
-from .fft import (
-    freq_axis1d,
-    freq_axes2d,
-    fft1d,
-    fft2d,
-    psd1d,
-    psd2d
-)
-
-from .corr import xcorr2d, autocorr2d
+from . import corr, fft, tracking
+from .corr import autocorr2d, xcorr2d
+from .fft import fft1d, fft2d, freq_axes2d, freq_axis1d, psd1d, psd2d
+from .tracking import phase_correlation, track_translation
 
 __all__ = [
     "fft",
     "corr",
+    "tracking",
     "freq_axis1d",
     "freq_axes2d",
     "fft1d",
@@ -27,4 +20,6 @@ __all__ = [
     "psd2d",
     "xcorr2d",
     "autocorr2d",
+    "phase_correlation",
+    "track_translation",
 ]

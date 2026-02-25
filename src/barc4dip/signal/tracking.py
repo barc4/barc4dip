@@ -79,6 +79,116 @@ def track_translation(
     )
 
 
+@_register("template")
+def template_matching(
+    template: np.ndarray,
+    image: np.ndarray,
+    *,
+    slices_yx: tuple[slice, slice] | None = None,
+    backend: Literal["opencv", "skimage"] = "opencv",
+    subpixel: bool = True,
+    eps: float = 1e-9,
+) -> tuple[float, float, float, float]:
+    """
+    Estimate translation (dy, dx) by template matching.
+
+    Conventions
+    -----------
+    NumPy convention (origin at upper-left):
+    - +dy is downward, +dx is rightward.
+    - Returned (dy, dx) is the shift from the template's *reference position*
+      (given by slices_yx) to its best-matching position in `image`.
+
+    Parameters
+    ----------
+    template : np.ndarray
+        2D template ROI (h, w), typically cut from the reference frame.
+    image : np.ndarray
+        2D image (H, W). This may be a pre-windowed/cropped search image.
+    slices_yx : tuple[slice, slice] | None
+        Location of the template in the reference frame coordinates.
+        If None, assumes the template is centered in the (reference) image.
+        (In practice: pass the correct slices if you want dy/dx relative to
+        a known reference position.)
+    backend : {"opencv", "skimage"}
+        Template matching implementation:
+        - "opencv": cv2.matchTemplate(..., TM_CCOEFF_NORMED)
+        - "skimage": skimage.feature.match_template
+    subpixel : bool
+        If True, apply 2D Taylor refinement on the match-map peak.
+    eps : float
+        Numerical stability constant.
+
+    Returns
+    -------
+    tuple[float, float, float, float]
+        (dy, dx, peak_value, snr)
+
+    Raises
+    ------
+    ImportError
+        If the selected backend is not available.
+    ValueError
+        If inputs are not 2D, or template larger than image, or backend unknown.
+    """
+    tpl = _as_float2d(template, name="template")
+    img = _as_float2d(image, name="image")
+
+    H, W = img.shape
+    h, w = tpl.shape
+    if h > H or w > W:
+        raise ValueError(f"template shape {(h, w)} must fit inside image shape {(H, W)}")
+
+    if slices_yx is None:
+        slices_yx = roi_slices((H, W), (h, w), center_yx=None, clip=False)
+
+    sy_ref, sx_ref = slices_yx
+
+    y0 = (sy_ref.start + sy_ref.stop - 1) / 2.0
+    x0 = (sx_ref.start + sx_ref.stop - 1) / 2.0
+
+    tpl_z = _zscore2d(tpl, eps=eps).astype(np.float32, copy=False)
+
+    if backend == "opencv":
+        try:
+            import cv2
+        except Exception as exc:
+            raise ImportError("backend='opencv' requires opencv-python (cv2).") from exc
+
+        img_z = _zscore2d(img, eps=eps).astype(np.float32, copy=False)
+        corr = cv2.matchTemplate(img_z, tpl_z, method=cv2.TM_CCOEFF_NORMED)
+
+    elif backend == "skimage":
+        try:
+            from skimage.feature import match_template
+        except Exception as exc:
+            raise ImportError("backend='skimage' requires scikit-image.") from exc
+
+        img_f = img.astype(np.float32, copy=False)
+        corr = match_template(img_f, tpl_z, pad_input=False)
+
+    else:
+        raise ValueError("backend must be 'opencv' or 'skimage'.")
+
+    max_i, max_j = np.unravel_index(int(np.argmax(corr)), corr.shape)
+    peak, snr = _corr_peak_quality(corr, peak_ij=(max_i, max_j), eps=eps)
+
+    py = float(max_i)
+    px = float(max_j)
+    if subpixel:
+        di, dj = _peak_subpixel_taylor(corr, peak_ij=(max_i, max_j))
+        py += float(di)
+        px += float(dj)
+
+    y_match = py + (h - 1) / 2.0
+    x_match = px + (w - 1) / 2.0
+
+    dy = float(y_match - y0)
+    dx = float(x_match - x0)
+
+    return dy, dx, float(peak), float(snr)
+
+
 @_register("phase")
 def phase_correlation(
     template: np.ndarray,
@@ -264,5 +374,4 @@ def _peak_subpixel_taylor(
     dj = - (dxx * dy - dxy * dx) * inv_det
 
     return float(di), float(dj)
-
 

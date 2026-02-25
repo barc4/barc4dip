@@ -18,6 +18,9 @@ from ..signal.corr import autocorr2d
 from ..signal.fft import psd2d
 from ..utils import elapsed_time, now
 from ..utils.range import percentile_minmax_range
+
+from ..geometry.roi import odd_size, roi_grid_3x3, roi_slices
+from ..signal.tracking import track_translation
 from .common import (
     apply_display_origin,
     choose_tiling_mode,
@@ -33,11 +36,11 @@ def speckle_stats(
     image: np.ndarray,
     *,
     metrics: str | Sequence[str] = "all",
-    tiles: bool = False,
+    tiles: bool = True,
     display_origin: Literal["upper", "lower"] = "lower",
     saturation_value: float | None = 65535.0,
     eps: float = 1e-6,
-    verbose: bool = False,
+    verbose: bool = True,
 ) -> dict:
     """
     Compute speckle metrics on a single 2D image.
@@ -69,7 +72,7 @@ def speckle_stats(
             Passed to distribution_moments (default: 1e-6).
         verbose (bool):
             Verbose output for full-frame metrics only. Tile computations force
-            verbose=False.
+            verbose=True.
 
     Returns:
         dict:
@@ -220,6 +223,292 @@ def _normalize_metric_groups(metrics: str | Sequence[str]) -> set[str]:
         else:
             groups.add(m)
     return groups
+
+
+def speckle_stack_stats(
+    stack: np.ndarray,
+    *,
+    metrics: str | Sequence[str] = "all",
+    tiles: bool = True,
+    display_origin: Literal["upper", "lower"] = "lower",
+    roi_grain_factor: float = 3.0,
+    roi_step_factor: float = 0.5,
+    tracking_method: str = "phase",
+    tracking_backend: Literal["internal", "skimage"] = "internal",
+    subpixel: bool = True,
+    saturation_value: float | None = 65535.0,
+    eps: float = 1e-6,
+    verbose: bool = True,
+) -> dict:
+    """Compute speckle metrics over time for a 3D stack, plus translation tracking.
+
+    This function is the time-stack analogue of :func:`speckle_stats`:
+    it computes the same per-frame metric blocks and stacks them along a
+    leading time axis ``T``. In addition, it computes translation estimates
+    (absolute and incremental) from a central 3x3 ROI grid using the tracking
+    primitives in :mod:`barc4dip.signal.tracking`.
+
+    Parameters
+    ----------
+    stack : np.ndarray
+        3D image stack with shape (T, H, W).
+    metrics : str | Sequence[str]
+        Metric group(s) to compute per frame (passed to :func:`speckle_stats`).
+    tiles : bool
+        If True, also compute per-frame tile metrics (passed to :func:`speckle_stats`).
+    display_origin : Literal["upper", "lower"]
+        Analysis origin convention (passed to :func:`speckle_stats`). Temporal tracking
+        is computed in NumPy convention and exported in detector convention by default
+        when ``display_origin="lower"``.
+    roi_grain_factor : float
+        ROI size factor relative to grain size. The tracking ROI size is
+        ``odd_size(roi_grain_factor * max(lx, ly, leq))``.
+    roi_step_factor : float
+        Step factor for the 3×3 ROI grid relative to ROI size. A value of 0.5 gives
+        roughly ROI/2 overlap.
+    tracking_method : str
+        Tracking method identifier passed to :func:`track_translation` (default: "phase").
+    tracking_backend : {"internal", "skimage"}
+        Backend for the selected tracking method (default: "internal").
+    subpixel : bool
+        Enable subpixel refinement in the tracker (default: True).
+    saturation_value : float | None
+        Passed to :func:`speckle_stats` (stats block).
+    eps : float
+        Numerical stability constant passed to :func:`speckle_stats`.
+    verbose : bool
+        If True, emit a concise per-frame timing summary via the logger.
+
+    Returns
+    -------
+    dict
+        Dictionary with keys:
+        - ``"meta"``: stack + tracking metadata
+        - ``"full"``: per-frame full-frame metrics stacked on time axis
+        - ``"tiles"``: per-frame tile metrics stacked on time axis (if requested/feasible)
+        - ``"temporal"``: translation tracking summary (abs/inc) aggregated across a 3×3 ROI grid
+
+    Raises
+    ------
+    TypeError
+        If stack is not a NumPy array.
+    ValueError
+        If stack is not 3D or has too few frames.
+    """
+    t0 = now()
+
+    if not isinstance(stack, np.ndarray):
+        raise TypeError("speckle_stack_stats expects a numpy.ndarray")
+    if stack.ndim != 3:
+        raise ValueError(f"stack must be a 3D array with shape (T, H, W); got ndim={stack.ndim}")
+    T, H, W = (int(stack.shape[0]), int(stack.shape[1]), int(stack.shape[2]))
+    if T < 1:
+        raise ValueError("stack must contain at least one frame.")
+
+    per_frame: list[dict] = []
+    last_bucket = -1
+    for t in range(T):
+        if verbose:
+            bucket = int((10 * t) // max(1, T - 1))
+            if bucket != last_bucket:
+                last_bucket = bucket
+                progress = 10 * bucket
+                num_hashes = bucket
+                bar = "#" * num_hashes + "-" * (10 - num_hashes)
+                print(f"\rSpeckle stats loop: [{bar}] {progress:3d}%", end="", flush=True)
+        frame = stack[t, :, :]
+        stats_t = speckle_stats(
+            frame,
+            metrics=metrics,
+            tiles=tiles,
+            display_origin=display_origin,
+            saturation_value=saturation_value,
+            eps=eps,
+            verbose=False,
+        )
+        per_frame.append(stats_t)
+    out_full = _stack_time_series([d["full"] for d in per_frame])
+    out_tiles = None
+    if tiles and all(isinstance(d.get("tiles"), dict) for d in per_frame):
+        out_tiles = _stack_time_series([d["tiles"] for d in per_frame])
+    if verbose:
+        print("\rSpeckle stats loop: [##########] 100%", flush=True)
+
+    frame0 = stack[0, :, :]
+    grain0 = grain(frame0, verbose=False)
+
+    l = float(np.nanmax([grain0.get("lx", np.nan), grain0.get("ly", np.nan), grain0.get("leq", np.nan)]))
+    if not np.isfinite(l) or l <= 0:
+        raise ValueError("Could not infer a valid grain size from frame 0 (lx/ly/leq).")
+
+    roi_side = odd_size(int(np.ceil(roi_grain_factor * l)))
+    roi_size_yx = (roi_side, roi_side)
+
+    step = int(max(1, round(roi_step_factor * roi_side)))
+    step_yx = (step, step)
+
+    grid_slices, grid_labels = roi_grid_3x3((H, W), roi_size_yx, step_yx, center_yx=None)
+
+    dx_abs_tiles = np.empty((T, 3, 3), dtype=np.float32)
+    dy_abs_tiles = np.empty((T, 3, 3), dtype=np.float32)
+    dx_inc_tiles = np.empty((T, 3, 3), dtype=np.float32)
+    dy_inc_tiles = np.empty((T, 3, 3), dtype=np.float32)
+
+    last_bucket = -1
+    for t in range(T):
+        if verbose:
+            bucket = int((10 * t) // max(1, T - 1))
+            if bucket != last_bucket:
+                last_bucket = bucket
+                progress = 10 * bucket
+                num_hashes = bucket
+                bar = "#" * num_hashes + "-" * (10 - num_hashes)
+                print(f"\rSpeckle stability loop: [{bar}] {progress:3d}%", end="", flush=True)
+        img_t = stack[t, :, :]
+
+        img_prev = stack[t - 1, :, :] if t > 0 else stack[0, :, :]
+
+        for iy in range(3):
+            for ix in range(3):
+                sy, sx = grid_slices[iy, ix]
+
+                tpl_abs = frame0[sy, sx]
+                dy_a, dx_a, _, _ = track_translation(
+                    tpl_abs,
+                    img_t,
+                    slices_yx=(sy, sx),
+                    method=tracking_method,
+                    backend=tracking_backend,
+                    subpixel=subpixel,
+                    eps=1e-9,
+                )
+                dy_abs_tiles[t, iy, ix] = dy_a
+                dx_abs_tiles[t, iy, ix] = dx_a
+
+                tpl_inc = img_prev[sy, sx]
+                dy_i, dx_i, _, _ = track_translation(
+                    tpl_inc,
+                    img_t,
+                    slices_yx=(sy, sx),
+                    method=tracking_method,
+                    backend=tracking_backend,
+                    subpixel=subpixel,
+                    eps=1e-9,
+                )
+                dy_inc_tiles[t, iy, ix] = dy_i
+                dx_inc_tiles[t, iy, ix] = dx_i
+    if display_origin == "lower":
+        dy_abs_tiles = -dy_abs_tiles
+        dy_inc_tiles = -dy_inc_tiles
+
+    r_abs_tiles = np.sqrt(dx_abs_tiles**2 + dy_abs_tiles**2)
+    r_inc_tiles = np.sqrt(dx_inc_tiles**2 + dy_inc_tiles**2)
+
+    def _mean_std(a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        mu = np.nanmean(a.reshape(T, -1), axis=1)
+        sd = np.nanstd(a.reshape(T, -1), axis=1)
+        return mu.astype(np.float32), sd.astype(np.float32)
+
+    dx_abs, std_dx_abs = _mean_std(dx_abs_tiles)
+    dy_abs, std_dy_abs = _mean_std(dy_abs_tiles)
+    r_abs, std_r_abs = _mean_std(r_abs_tiles)
+
+    dx_inc, std_dx_inc = _mean_std(dx_inc_tiles)
+    dy_inc, std_dy_inc = _mean_std(dy_inc_tiles)
+    r_inc, std_r_inc = _mean_std(r_inc_tiles)
+
+    temporal = {
+        "abs": {
+            "dx": dx_abs,
+            "dy": dy_abs,
+            "r": r_abs,
+            "std_dx": std_dx_abs,
+            "std_dy": std_dy_abs,
+            "std_r": std_r_abs,
+        },
+        "inc": {
+            "dx": dx_inc,
+            "dy": dy_inc,
+            "r": r_inc,
+            "std_dx": std_dx_inc,
+            "std_dy": std_dy_inc,
+            "std_r": std_r_inc,
+        },
+        "qc": {
+            "roi_grid_shape": (3, 3),
+        },
+    }
+
+    meta: dict = {
+        "kind": "speckle_stack_stats",
+        "input_shape": (H, W),
+        "stack_shape": (T, H, W),
+        "n_frames": T,
+        "display_origin": display_origin,
+        "grain0": {k: grain0.get(k) for k in ("lx", "ly", "leq", "r")},
+        "tracking": {
+            "method": str(tracking_method),
+            "backend": str(tracking_backend),
+            "subpixel": bool(subpixel),
+            "peak_mode": "abs",
+            "search_area": "full_frame",
+            "normalization": {"template": "zscore_local", "search": "zscore_global"},
+            "roi_grain_factor": float(roi_grain_factor),
+            "roi_size_yx": tuple(int(v) for v in roi_size_yx),
+            "roi_step_factor": float(roi_step_factor),
+            "roi_step_yx": tuple(int(v) for v in step_yx),
+            "roi_labels": grid_labels,
+            "roi_order": "row-major",
+        },
+    }
+
+    out: dict = {"meta": meta, "full": out_full, "temporal": temporal}
+    if out_tiles is not None:
+        out["tiles"] = out_tiles
+
+    if verbose:
+        print("\rSpeckle stats loop: [##########] 100%", flush=True)
+
+    if verbose:
+        logger.info(
+            "> speckle_stack_stats | frames=%d | roi=%dx%d | step=%d | elapsed=%s",
+            T,
+            roi_side,
+            roi_side,
+            step,
+            elapsed_time(t0),
+        )
+
+    return out
+
+def _stack_time_series(values: list[object]) -> object:
+    """Stack per-frame outputs along a new leading time axis.
+
+    Notes
+    -----
+    - Dicts are stacked recursively (same keys expected per frame).
+    - NumPy arrays are stacked with np.stack(axis=0).
+    - Scalars are stacked into a 1D NumPy array of length T.
+    """
+    if not values:
+        raise ValueError("No values provided for stacking.")
+
+    v0 = values[0]
+
+    if isinstance(v0, dict):
+        out: dict = {}
+        keys = v0.keys()
+        for k in keys:
+            out[k] = _stack_time_series([v[k] for v in values])
+        return out
+
+    if isinstance(v0, np.ndarray):
+        return np.stack([np.asarray(v) for v in values], axis=0)
+
+    if isinstance(v0, (float, int, np.floating, np.integer, bool, np.bool_)):
+        return np.asarray(values)
+
+    return list(values)
 
 # ---------------------------------------------------------------------------
 # Grain
@@ -554,3 +843,5 @@ def bandwidth(image: np.ndarray, verbose: bool = False) -> dict[str, float]:
         )
 
     return spectral
+
+

@@ -233,8 +233,8 @@ def speckle_stack_stats(
     display_origin: Literal["upper", "lower"] = "lower",
     roi_grain_factor: float = 3.0,
     roi_step_factor: float = 0.5,
-    tracking_method: str = "phase",
-    tracking_backend: Literal["internal", "skimage"] = "internal",
+    tracking_method: str = "template",
+    tracking_backend: Literal["internal", "skimage", "opencv"] = "skimage",
     subpixel: bool = True,
     saturation_value: float | None = 65535.0,
     eps: float = 1e-6,
@@ -313,9 +313,9 @@ def speckle_stack_stats(
             if bucket != last_bucket:
                 last_bucket = bucket
                 progress = 10 * bucket
-                num_hashes = bucket
-                bar = "#" * num_hashes + "-" * (10 - num_hashes)
+                bar = "#" * bucket + "-" * (10 - bucket)
                 print(f"\rSpeckle stats loop: [{bar}] {progress:3d}%", end="", flush=True)
+
         frame = stack[t, :, :]
         stats_t = speckle_stats(
             frame,
@@ -327,10 +327,12 @@ def speckle_stack_stats(
             verbose=False,
         )
         per_frame.append(stats_t)
+
     out_full = _stack_time_series([d["full"] for d in per_frame])
     out_tiles = None
     if tiles and all(isinstance(d.get("tiles"), dict) for d in per_frame):
         out_tiles = _stack_time_series([d["tiles"] for d in per_frame])
+
     if verbose:
         print("\rSpeckle stats loop: [##########] 100%", flush=True)
 
@@ -361,11 +363,10 @@ def speckle_stack_stats(
             if bucket != last_bucket:
                 last_bucket = bucket
                 progress = 10 * bucket
-                num_hashes = bucket
-                bar = "#" * num_hashes + "-" * (10 - num_hashes)
+                bar = "#" * bucket + "-" * (10 - bucket)
                 print(f"\rSpeckle stability loop: [{bar}] {progress:3d}%", end="", flush=True)
-        img_t = stack[t, :, :]
 
+        img_t = stack[t, :, :]
         img_prev = stack[t - 1, :, :] if t > 0 else stack[0, :, :]
 
         for iy in range(3):
@@ -397,6 +398,10 @@ def speckle_stack_stats(
                 )
                 dy_inc_tiles[t, iy, ix] = dy_i
                 dx_inc_tiles[t, iy, ix] = dx_i
+
+    if verbose:
+        print("\rSpeckle stability loop: [##########] 100%", flush=True)
+
     if display_origin == "lower":
         dy_abs_tiles = -dy_abs_tiles
         dy_inc_tiles = -dy_inc_tiles
@@ -404,18 +409,21 @@ def speckle_stack_stats(
     r_abs_tiles = np.sqrt(dx_abs_tiles**2 + dy_abs_tiles**2)
     r_inc_tiles = np.sqrt(dx_inc_tiles**2 + dy_inc_tiles**2)
 
-    def _mean_std(a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        mu = np.nanmean(a.reshape(T, -1), axis=1)
-        sd = np.nanstd(a.reshape(T, -1), axis=1)
-        return mu.astype(np.float32), sd.astype(np.float32)
+    dx_abs = np.nanmean(dx_abs_tiles, axis=(1, 2)).astype(np.float32)
+    dy_abs = np.nanmean(dy_abs_tiles, axis=(1, 2)).astype(np.float32)
+    r_abs = np.nanmean(r_abs_tiles, axis=(1, 2)).astype(np.float32)
 
-    dx_abs, std_dx_abs = _mean_std(dx_abs_tiles)
-    dy_abs, std_dy_abs = _mean_std(dy_abs_tiles)
-    r_abs, std_r_abs = _mean_std(r_abs_tiles)
+    std_dx_abs = np.nanstd(dx_abs_tiles, axis=(1, 2)).astype(np.float32)
+    std_dy_abs = np.nanstd(dy_abs_tiles, axis=(1, 2)).astype(np.float32)
+    std_r_abs = np.nanstd(r_abs_tiles, axis=(1, 2)).astype(np.float32)
 
-    dx_inc, std_dx_inc = _mean_std(dx_inc_tiles)
-    dy_inc, std_dy_inc = _mean_std(dy_inc_tiles)
-    r_inc, std_r_inc = _mean_std(r_inc_tiles)
+    dx_inc = np.nanmean(dx_inc_tiles, axis=(1, 2)).astype(np.float32)
+    dy_inc = np.nanmean(dy_inc_tiles, axis=(1, 2)).astype(np.float32)
+    r_inc = np.nanmean(r_inc_tiles, axis=(1, 2)).astype(np.float32)
+
+    std_dx_inc = np.nanstd(dx_inc_tiles, axis=(1, 2)).astype(np.float32)
+    std_dy_inc = np.nanstd(dy_inc_tiles, axis=(1, 2)).astype(np.float32)
+    std_r_inc = np.nanstd(r_inc_tiles, axis=(1, 2)).astype(np.float32)
 
     temporal = {
         "abs": {
@@ -434,9 +442,7 @@ def speckle_stack_stats(
             "std_dy": std_dy_inc,
             "std_r": std_r_inc,
         },
-        "qc": {
-            "roi_grid_shape": (3, 3),
-        },
+        "qc": {"roi_grid_shape": (3, 3)},
     }
 
     meta: dict = {
@@ -465,9 +471,6 @@ def speckle_stack_stats(
     out: dict = {"meta": meta, "full": out_full, "temporal": temporal}
     if out_tiles is not None:
         out["tiles"] = out_tiles
-
-    if verbose:
-        print("\rSpeckle stats loop: [##########] 100%", flush=True)
 
     if verbose:
         logger.info(

@@ -484,6 +484,251 @@ def speckle_stack_stats(
 
     return out
 
+
+def par_speckle_stack_stats(
+    stack: np.ndarray,
+    *,
+    metrics: str | Sequence[str] = "all",
+    tiles: bool = True,
+    display_origin: Literal["upper", "lower"] = "lower",
+    roi_grain_factor: float = 3.0,
+    roi_step_factor: float = 0.5,
+    tracking_method: str = "template",
+    tracking_backend: Literal["internal", "skimage", "opencv"] = "skimage",
+    subpixel: bool = True,
+    saturation_value: float | None = 65535.0,
+    eps: float = 1e-6,
+    verbose: bool = True,
+    parallel: bool = True,
+    n_jobs: int | None = None,
+) -> dict:
+    """
+    Parallel-capable version:
+    - If parallel=False: your 10% progress bars (stdout).
+    - If parallel=True: joblib handles scheduling; progress via joblib verbose.
+    """
+
+    from joblib import Parallel, delayed
+    prefer = "threads"
+
+    t0 = now()
+
+    if not isinstance(stack, np.ndarray):
+        raise TypeError("speckle_stack_stats expects a numpy.ndarray")
+    if stack.ndim != 3:
+        raise ValueError(f"stack must be a 3D array with shape (T, H, W); got ndim={stack.ndim}")
+    T, H, W = (int(stack.shape[0]), int(stack.shape[1]), int(stack.shape[2]))
+    if T < 1:
+        raise ValueError("stack must contain at least one frame.")
+
+    serial_mode = (not parallel) or (n_jobs is not None and int(n_jobs) <= 1)
+
+    def _progress_update(loop_name: str, t: int, last_bucket: int) -> int:
+        bucket = int((10 * t) // max(1, T - 1))  # 0..10
+        if bucket != last_bucket:
+            progress = 10 * bucket
+            bar = "#" * bucket + "-" * (10 - bucket)
+            print(f"\r{loop_name}: [{bar}] {progress:3d}%", end="", flush=True)
+            return bucket
+        return last_bucket
+
+    def _progress_done(loop_name: str) -> None:
+        print(f"\r{loop_name}: [##########] 100%", flush=True)
+
+    def _speckle_stats_one(t: int) -> dict:
+        frame = stack[t, :, :]
+        return speckle_stats(
+            frame,
+            metrics=metrics,
+            tiles=tiles,
+            display_origin=display_origin,
+            saturation_value=saturation_value,
+            eps=eps,
+            verbose=False,
+        )
+
+    if serial_mode:
+        per_frame: list[dict] = []
+        last = -1
+        for t in range(T):
+            if verbose:
+                last = _progress_update("Speckle stats loop", t, last)
+            per_frame.append(_speckle_stats_one(t))
+        if verbose:
+            _progress_done("Speckle stats loop")
+    else:
+        jb_verbose = 10 if verbose else 0
+        per_frame = Parallel(n_jobs=n_jobs, prefer=prefer, verbose=jb_verbose)(
+            delayed(_speckle_stats_one)(t) for t in range(T)
+        )
+
+    out_full = _stack_time_series([d["full"] for d in per_frame])
+    out_tiles = None
+    if tiles and all(isinstance(d.get("tiles"), dict) for d in per_frame):
+        out_tiles = _stack_time_series([d["tiles"] for d in per_frame])
+
+    frame0 = stack[0, :, :]
+    grain0 = grain(frame0, verbose=False)
+
+    l = float(np.nanmax([grain0.get("lx", np.nan), grain0.get("ly", np.nan), grain0.get("leq", np.nan)]))
+    if not np.isfinite(l) or l <= 0:
+        raise ValueError("Could not infer a valid grain size from frame 0 (lx/ly/leq).")
+
+    roi_side = odd_size(int(np.ceil(roi_grain_factor * l)))
+    roi_size_yx = (roi_side, roi_side)
+
+    step = int(max(1, round(roi_step_factor * roi_side)))
+    step_yx = (step, step)
+
+    grid_slices, grid_labels = roi_grid_3x3((H, W), roi_size_yx, step_yx, center_yx=None)
+
+    def _track_one_time_step(t: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        img_t = stack[t, :, :]
+        img_prev = stack[t - 1, :, :] if t > 0 else stack[0, :, :]
+
+        dx_abs_3x3 = np.empty((3, 3), dtype=np.float32)
+        dy_abs_3x3 = np.empty((3, 3), dtype=np.float32)
+        dx_inc_3x3 = np.empty((3, 3), dtype=np.float32)
+        dy_inc_3x3 = np.empty((3, 3), dtype=np.float32)
+
+        for iy in range(3):
+            for ix in range(3):
+                sy, sx = grid_slices[iy, ix]
+
+                tpl_abs = frame0[sy, sx]
+                dy_a, dx_a, _, _ = track_translation(
+                    tpl_abs,
+                    img_t,
+                    slices_yx=(sy, sx),
+                    method=tracking_method,
+                    backend=tracking_backend,
+                    subpixel=subpixel,
+                    eps=1e-9,
+                )
+                dy_abs_3x3[iy, ix] = dy_a
+                dx_abs_3x3[iy, ix] = dx_a
+
+                tpl_inc = img_prev[sy, sx]
+                dy_i, dx_i, _, _ = track_translation(
+                    tpl_inc,
+                    img_t,
+                    slices_yx=(sy, sx),
+                    method=tracking_method,
+                    backend=tracking_backend,
+                    subpixel=subpixel,
+                    eps=1e-9,
+                )
+                dy_inc_3x3[iy, ix] = dy_i
+                dx_inc_3x3[iy, ix] = dx_i
+
+        return dx_abs_3x3, dy_abs_3x3, dx_inc_3x3, dy_inc_3x3
+
+    if serial_mode:
+        dx_abs_tiles = np.empty((T, 3, 3), dtype=np.float32)
+        dy_abs_tiles = np.empty((T, 3, 3), dtype=np.float32)
+        dx_inc_tiles = np.empty((T, 3, 3), dtype=np.float32)
+        dy_inc_tiles = np.empty((T, 3, 3), dtype=np.float32)
+
+        last = -1
+        for t in range(T):
+            if verbose:
+                last = _progress_update("Speckle stability loop", t, last)
+
+            dx_a, dy_a, dx_i, dy_i = _track_one_time_step(t)
+            dx_abs_tiles[t, :, :] = dx_a
+            dy_abs_tiles[t, :, :] = dy_a
+            dx_inc_tiles[t, :, :] = dx_i
+            dy_inc_tiles[t, :, :] = dy_i
+
+        if verbose:
+            _progress_done("Speckle stability loop")
+    else:
+        jb_verbose = 10 if verbose else 0
+        results = Parallel(n_jobs=n_jobs, prefer=prefer, verbose=jb_verbose)(
+            delayed(_track_one_time_step)(t) for t in range(T)
+        )
+        dx_abs_tiles = np.stack([r[0] for r in results], axis=0)
+        dy_abs_tiles = np.stack([r[1] for r in results], axis=0)
+        dx_inc_tiles = np.stack([r[2] for r in results], axis=0)
+        dy_inc_tiles = np.stack([r[3] for r in results], axis=0)
+
+    if display_origin == "lower":
+        dy_abs_tiles = -dy_abs_tiles
+        dy_inc_tiles = -dy_inc_tiles
+
+    r_abs_tiles = np.sqrt(dx_abs_tiles**2 + dy_abs_tiles**2)
+    r_inc_tiles = np.sqrt(dx_inc_tiles**2 + dy_inc_tiles**2)
+
+    dx_abs = np.nanmean(dx_abs_tiles, axis=(1, 2)).astype(np.float32)
+    dy_abs = np.nanmean(dy_abs_tiles, axis=(1, 2)).astype(np.float32)
+    r_abs = np.nanmean(r_abs_tiles, axis=(1, 2)).astype(np.float32)
+
+    std_dx_abs = np.nanstd(dx_abs_tiles, axis=(1, 2)).astype(np.float32)
+    std_dy_abs = np.nanstd(dy_abs_tiles, axis=(1, 2)).astype(np.float32)
+    std_r_abs = np.nanstd(r_abs_tiles, axis=(1, 2)).astype(np.float32)
+
+    dx_inc = np.nanmean(dx_inc_tiles, axis=(1, 2)).astype(np.float32)
+    dy_inc = np.nanmean(dy_inc_tiles, axis=(1, 2)).astype(np.float32)
+    r_inc = np.nanmean(r_inc_tiles, axis=(1, 2)).astype(np.float32)
+
+    std_dx_inc = np.nanstd(dx_inc_tiles, axis=(1, 2)).astype(np.float32)
+    std_dy_inc = np.nanstd(dy_inc_tiles, axis=(1, 2)).astype(np.float32)
+    std_r_inc = np.nanstd(r_inc_tiles, axis=(1, 2)).astype(np.float32)
+
+    temporal = {
+        "abs": {"dx": dx_abs, "dy": dy_abs, "r": r_abs, "std_dx": std_dx_abs, "std_dy": std_dy_abs, "std_r": std_r_abs},
+        "inc": {"dx": dx_inc, "dy": dy_inc, "r": r_inc, "std_dx": std_dx_inc, "std_dy": std_dy_inc, "std_r": std_r_inc},
+        "qc": {"roi_grid_shape": (3, 3)},
+    }
+
+    meta: dict = {
+        "kind": "speckle_stack_stats",
+        "input_shape": (H, W),
+        "stack_shape": (T, H, W),
+        "n_frames": T,
+        "display_origin": display_origin,
+        "grain0": {k: grain0.get(k) for k in ("lx", "ly", "leq", "r")},
+        "tracking": {
+            "method": str(tracking_method),
+            "backend": str(tracking_backend),
+            "subpixel": bool(subpixel),
+            "peak_mode": "abs",
+            "search_area": "full_frame",
+            "normalization": {"template": "zscore_local", "search": "zscore_global"},
+            "roi_grain_factor": float(roi_grain_factor),
+            "roi_size_yx": tuple(int(v) for v in roi_size_yx),
+            "roi_step_factor": float(roi_step_factor),
+            "roi_step_yx": tuple(int(v) for v in step_yx),
+            "roi_labels": grid_labels,
+            "roi_order": "row-major",
+        },
+        "parallel": {
+            "enabled": bool(not serial_mode),
+            "n_jobs": None if serial_mode else n_jobs,
+            "prefer": str(prefer),
+            "joblib_verbose": (10 if (not serial_mode and verbose) else 0),
+        },
+    }
+
+    out: dict = {"meta": meta, "full": out_full, "temporal": temporal}
+    if out_tiles is not None:
+        out["tiles"] = out_tiles
+
+    if verbose:
+        logger.info(
+            "> speckle_stack_stats | frames=%d | roi=%dx%d | step=%d | parallel=%s | n_jobs=%s | elapsed=%s",
+            T,
+            roi_side,
+            roi_side,
+            step,
+            "yes" if not serial_mode else "no",
+            "1" if serial_mode else str(n_jobs),
+            int(elapsed_time(t0)),
+        )
+
+    return out
+
+
 def _stack_time_series(values: list[object]) -> object:
     """Stack per-frame outputs along a new leading time axis.
 

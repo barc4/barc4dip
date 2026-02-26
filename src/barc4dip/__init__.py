@@ -29,6 +29,7 @@ __all__ = [
     "read_image",
     "write_image",
     "speckle_stats",
+    "speckle_stack_stats",
     "sharpness_stats",
     "distribution_moments",
     "logbook_report",

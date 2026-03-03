@@ -125,15 +125,6 @@ def plt_speckle_tiles_metric(img: np.ndarray,
     show_std: bool = True,
     fmt: str = "{:.2f}",
     display_origin: Literal["upper", "lower"] | None = None,
-    grid_color: str = "orange",
-    grid_lw: float = 1.5,
-    grid_alpha: float = 0.9,
-    text_color: str = "w",
-    text_alpha: float = 0.95,
-    bbox_facecolor: str = "black",
-    bbox_alpha: float = 0.40,
-    bbox_edgecolor: str = "none",
-    bbox_lw: float = 0.0,
 ) -> tuple[Figure, Axes, object]:
     """
     Plot a speckle image and overlay a 3x3 tile grid with metric mean ± std.
@@ -166,10 +157,6 @@ def plt_speckle_tiles_metric(img: np.ndarray,
     display_origin
         If None, uses stats["meta"]["display_origin"] when available,
         otherwise defaults to "lower".
-    grid_color, grid_lw, grid_alpha
-        Grid styling.
-    text_color, text_alpha, bbox_*
-        Text and bbox styling.
 
     Returns
     -------
@@ -180,6 +167,7 @@ def plt_speckle_tiles_metric(img: np.ndarray,
         raise ValueError(
             f"img must be a 2D numpy array; got {type(img)} shape={getattr(img, 'shape', None)!r}"
         )
+
 
     meta = stats.get("meta")
     tiles = stats.get("tiles")
@@ -252,7 +240,7 @@ def plt_speckle_tiles_metric(img: np.ndarray,
     ax.set_ylabel("y (px)")
 
     if title is None:
-        title = f"{group}.{metric} (tiles)"
+        title = f"{metric}"
     ax.set_title(title, fontsize=14 * k)
 
     x0, x1 = ax.get_xlim()
@@ -260,6 +248,16 @@ def plt_speckle_tiles_metric(img: np.ndarray,
 
     edges_x = np.linspace(x0, x1, 4)
     edges_y = np.linspace(y1, y0, 4)
+
+    grid_color = "orange"
+    grid_lw = 1.5
+    grid_alpha = 0.9
+    text_color = "w"
+    text_alpha = 0.95
+    bbox_facecolor = "black"
+    bbox_alpha = 0.60
+    bbox_edgecolor = "black"
+    bbox_lw = 0.0
 
     for x in edges_x:
         ax.plot([x, x], [y1, y0], "-", lw=grid_lw, alpha=grid_alpha, color=grid_color)

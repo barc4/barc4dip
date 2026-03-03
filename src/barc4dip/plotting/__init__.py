@@ -7,12 +7,17 @@ Unified public plotting API for barc4dip.
 
 from __future__ import annotations
 
-from .viz import (
-    uint16_image,
-    uint16_histogram
+from .image import (
+    plt_image,
+    plt_speckle_tiles_metric,
+    plt_histogram,
 )
 
+from .stack import plt_displacement
+
 __all__ = [
-    "uint16_image",
-    "uint16_histogram"
+    "plt_image",
+    "plt_speckle_tiles_metric",
+    "plt_histogram",
+    "plt_displacement"
 ]

@@ -68,6 +68,7 @@ def read_image(
     *,
     file_extension: str | None = None,
     image_number: int | None = None,
+    mean: bool = False,
     verbose: bool = False,
 ) -> np.ndarray:
     """
@@ -82,6 +83,9 @@ def read_image(
             Frame index to load when reading a single HDF5 file containing a 3D dataset
             (N, H, W). If None (default), the full dataset is returned.
             This option is not supported for TIFF/EDF in this project.
+        mean : bool
+            If True and the loaded data is a 3D stack (N, H, W), return the mean
+            image computed along axis 0. Default is False.
         verbose (bool):
             If True, prints basic information about the loaded data.
 
@@ -121,6 +125,11 @@ def read_image(
         data = read_h5(image_path, image_number=image_number)
     else:
         raise RuntimeError(f"Unhandled reader kind: {kind}")
+
+    if mean and data.ndim == 3:
+        data = data.mean(axis=0)
+        if verbose:
+            print("Collapsed 3D stack to mean image along axis 0.")
 
     if verbose:
         if data.ndim == 2:

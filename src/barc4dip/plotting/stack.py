@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Sequence
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -17,6 +17,7 @@ from .style import start_plotting
 _TemporalKey = Literal["abs", "inc"]
 _ViewKind = Literal["trajectory", "timeseries"]
 _Uncertainty = Literal["none", "band", "errorbar"]
+_StatsScope = Literal["full", "tiles"]
 
 
 def _get_temporal_block(stack_stats: dict, temporal: _TemporalKey) -> dict:
@@ -39,6 +40,63 @@ def _get_series(block: dict, key: str) -> np.ndarray:
     if arr.ndim != 1:
         raise ValueError(f"temporal[{key!r}] must be 1D; got shape={arr.shape!r}")
     return arr
+
+
+def _parse_metric_path(metric_path: str | Sequence[str]) -> tuple[str, str]:
+    if isinstance(metric_path, str):
+        parts = tuple(p for p in metric_path.replace("/", ".").split(".") if p)
+    else:
+        parts = tuple(metric_path)
+    if len(parts) != 2:
+        raise ValueError("metric_path must be like ('grain','lx') or 'grain.lx'")
+    group, metric = parts
+    return str(group), str(metric)
+
+
+def _default_tile_labels(meta: dict) -> np.ndarray:
+    tile_labels = meta.get("tile_labels", None)
+    if isinstance(tile_labels, np.ndarray) and tile_labels.shape == (3, 3):
+        return tile_labels
+    return np.array([["NW", "N", "NE"], ["W", "C", "E"], ["SW", "S", "SE"]], dtype=object)
+
+
+def _plot_timeseries(
+    ax: Axes,
+    t: np.ndarray,
+    y: np.ndarray,
+    *,
+    color: object,
+    ylabel: str,
+    label: str=None,
+    uncertainty: _Uncertainty,
+    ystd: np.ndarray | float | None,
+    marker: str = "o",
+    markersize: float = 3.0,
+) -> None:
+    ax.plot(
+        t,
+        y,
+        linewidth=1.0,
+        linestyle="-",
+        color=color,
+        markerfacecolor="white",
+        markeredgecolor=color,
+        markeredgewidth=1.1,
+        marker=marker,
+        markersize=markersize,
+        label=label,
+    )
+
+    if uncertainty != "none" and ystd is not None:
+        if uncertainty == "band":
+            ax.fill_between(t, y - ystd, y + ystd, alpha=0.2, color=color)
+        elif uncertainty == "errorbar":
+            ax.errorbar(t, y, yerr=ystd, fmt="none", elinewidth=0.8, capsize=0, color=color)
+        else:
+            raise ValueError(f"unknown uncertainty={uncertainty!r}")
+
+    ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.3)
 
 
 def plt_displacement(
@@ -86,8 +144,22 @@ def plt_displacement(
     artist : object | None
         Scatter artist for trajectory mode (for colorbar), else None.
     """
-
     start_plotting(k)
+
+    meta = stack_stats.get("meta")
+    if not isinstance(meta, dict):
+        raise ValueError("stack_stats must contain dict key 'meta'")
+
+    # --- NEW: unit lookup for temporal displacement ---
+    units = meta.get("units", {})
+    unit_px = "px"
+    if isinstance(units, dict):
+        temporal_units = units.get("temporal")
+        if isinstance(temporal_units, dict):
+            u_dx = temporal_units.get("dx")
+            if isinstance(u_dx, str) and u_dx.strip() != "":
+                unit_px = u_dx
+    # -------------------------------------------------
 
     block = _get_temporal_block(stack_stats, temporal=temporal)
 
@@ -149,12 +221,12 @@ def plt_displacement(
         fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
         if show_path:
-            ax.plot(dxp, dyp, linewidth=1., color='black')
+            ax.plot(dxp, dyp, linewidth=1.0, color="black")
 
-        sc = ax.scatter(dxp, dyp, c=t, cmap=cmap, s=25, zorder=3, edgecolors='black', linewidths=0.5)
+        sc = ax.scatter(dxp, dyp, c=t, cmap=cmap, s=25, zorder=3, edgecolors="black", linewidths=0.5)
 
-        ax.set_xlabel("dx (px)")
-        ax.set_ylabel("dy (px)")
+        ax.set_xlabel(f"dx ({unit_px})")
+        ax.set_ylabel(f"dy ({unit_px})")
         if title is None:
             ax.set_title(f"Speckle displacement ({temporal})", fontsize=15 * k)
         else:
@@ -180,25 +252,11 @@ def plt_displacement(
     if not isinstance(axes, np.ndarray):
         axes = np.array([axes], dtype=object)
 
-    def _plot_series(ax: Axes, y: np.ndarray, clr: str, ystd: np.ndarray | None, label: str) -> None:
-        ax.plot(t, y, linewidth=1., linestyle='-', color=clr,
-                markerfacecolor='white', markeredgecolor=clr, markeredgewidth=1.1,
-                marker="o", markersize=3,)
-        if uncertainty != "none" and ystd is not None:
-            if uncertainty == "band":
-                ax.fill_between(t, y - ystd, y + ystd, alpha=0.2)
-            elif uncertainty == "errorbar":
-                ax.errorbar(t, y, yerr=ystd, fmt="none", elinewidth=0.8, capsize=0)
-            else:
-                raise ValueError(f"unknown uncertainty={uncertainty!r}")
-        ax.set_ylabel(label)
-        ax.grid(True, alpha=0.3)
-
     colors = ["darkred", "olive", "steelblue"]
 
-    _plot_series(axes[0], dxp, colors[0], sdxp, "dx (px)")
-    _plot_series(axes[1], dyp, colors[1], sdyp, "dy (px)")
-    _plot_series(axes[2],  rp, colors[2], sdrp, "r (px)")
+    _plot_timeseries(axes[0], t, dxp, color=colors[0], ylabel=f"dx ({unit_px})", uncertainty=uncertainty, ystd=sdxp)
+    _plot_timeseries(axes[1], t, dyp, color=colors[1], ylabel=f"dy ({unit_px})", uncertainty=uncertainty, ystd=sdyp)
+    _plot_timeseries(axes[2], t, rp,  color=colors[2], ylabel=f"r ({unit_px})",  uncertainty=uncertainty, ystd=sdrp)
 
     axes[-1].set_xlabel("(frame)")
 
@@ -209,3 +267,183 @@ def plt_displacement(
 
     fig.tight_layout()
     return fig, axes, None
+
+
+def plt_speckle_stack_metric(
+    stack_stats: dict,
+    metric_path: str | Sequence[str],
+    *,
+    scope: _StatsScope = "full",
+    uncertainty: _Uncertainty = "none",
+    cmap: str = "tab10",
+    color: str = "darkred",
+    markers: Sequence[str] | None = None,
+    k: float = 1.0,
+    title: str | None = None,
+) -> tuple[Figure, Axes, None]:
+    """
+    Plot a single metric as a time series from ``speckle_stack_stats`` output.
+
+    This is a 1-panel analogue of ``plt_displacement(kind="timeseries")``:
+    - scope="full": plot one curve from stack_stats["full"][group][metric]
+      and (optionally) show uncertainty using a scalar std = np.nanstd(y).
+    - scope="tiles": plot the 9 tile curves from
+        stack_stats["tiles"][group][metric]["mean"] -> (T, 3, 3)
+        stack_stats["tiles"][group][metric]["std"]  -> (T, 3, 3)
+      using distinct colors and markers, and per-frame std.
+    """
+    start_plotting(k)
+
+    if not isinstance(stack_stats, dict):
+        raise TypeError("stack_stats must be a dict")
+
+    meta = stack_stats.get("meta")
+    if not isinstance(meta, dict):
+        raise ValueError("stack_stats must contain dict key 'meta'")
+
+    units = meta.get("units", {})
+
+    group, metric = _parse_metric_path(metric_path)
+
+    # --- NEW: units-aware default title and y-label ---
+    unit = None
+    if isinstance(units, dict):
+        group_units = units.get(group)
+        if isinstance(group_units, dict):
+            unit = group_units.get(metric)
+
+    if isinstance(unit, str) and unit.strip() != "":
+        metric_with_unit = f"{metric} ({unit})"
+        ylabel = metric_with_unit
+    else:
+        metric_with_unit = metric
+        ylabel = metric
+    # -------------------------------------------------
+
+    nrows = 1
+    fig_h = 3.0
+    fig_w = 8.0
+
+    fig, ax = plt.subplots(nrows=nrows, ncols=1, sharex=True, figsize=(fig_w, fig_h))
+
+    if title is None:
+        title = f"{scope}: {group}.{metric_with_unit}"
+    ax.set_title(title, fontsize=15 * k)
+    ax.set_xlabel("(frame)")
+    ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.3)
+
+    if scope == "full":
+        full = stack_stats.get("full")
+        if not isinstance(full, dict):
+            raise ValueError("stack_stats must contain dict key 'full'")
+
+        group_block = full.get(group)
+        if not isinstance(group_block, dict):
+            raise KeyError(f"full has no group {group!r}")
+
+        y = group_block.get(metric)
+        if not isinstance(y, np.ndarray):
+            raise ValueError(f"Expected full[{group!r}][{metric!r}] as numpy array; got {type(y)}")
+        if y.ndim != 1:
+            raise ValueError(f"Expected 1D time series for full[{group!r}][{metric!r}]; got shape={y.shape!r}")
+
+        t = np.arange(y.size, dtype=float)
+        m = np.isfinite(y)
+        yp = y[m]
+        tp = t[m]
+
+        ystd: float | None
+        if uncertainty == "none":
+            ystd = None
+        else:
+            ystd = float(np.nanstd(yp))
+
+        _plot_timeseries(
+            ax,
+            tp,
+            yp,
+            color=color,
+            ylabel=ylabel,
+            uncertainty=uncertainty,
+            ystd=ystd,
+            marker="o",
+            markersize=3.0,
+        )
+
+        return fig, ax, None
+
+    if scope != "tiles":
+        raise ValueError(f"unknown scope={scope!r}")
+
+    tiles = stack_stats.get("tiles")
+    if not isinstance(tiles, dict):
+        raise ValueError("stack_stats must contain dict key 'tiles' for scope='tiles'")
+
+    group_block = tiles.get(group)
+    if not isinstance(group_block, dict):
+        raise KeyError(f"tiles has no group {group!r}")
+
+    metric_block = group_block.get(metric)
+    if not isinstance(metric_block, dict):
+        raise KeyError(f"tiles[{group!r}] has no metric {metric!r}")
+
+    mean = metric_block.get("mean")
+    std = metric_block.get("std")
+
+    if not isinstance(mean, np.ndarray) or mean.ndim != 3 or mean.shape[1:] != (3, 3):
+        raise ValueError(
+            f"Expected tiles[{group!r}][{metric!r}]['mean'] with shape (T,3,3); "
+            f"got {type(mean)} shape={getattr(mean, 'shape', None)!r}"
+        )
+    if uncertainty != "none":
+        if not isinstance(std, np.ndarray) or std.ndim != 3 or std.shape != mean.shape:
+            raise ValueError(
+                f"Expected tiles[{group!r}][{metric!r}]['std'] with shape {mean.shape!r}; "
+                f"got {type(std)} shape={getattr(std, 'shape', None)!r}"
+            )
+
+    labels = _default_tile_labels(meta)
+
+    T = int(mean.shape[0])
+    t_all = np.arange(T, dtype=float)
+
+    if markers is None:
+        markers = ("o", "s", "^", "v", "D", "P", "X", "<", ">")
+    if len(markers) < 9:
+        raise ValueError("markers must have length >= 9 (tiles mode)")
+
+    cmap_obj = plt.get_cmap(cmap)
+    colors = [cmap_obj(i / max(8, 1)) for i in range(9)]
+
+    idx = 0
+    for iy in range(3):
+        for ix in range(3):
+            y = mean[:, iy, ix].astype(float, copy=False)
+            ystd_arr = None
+            if uncertainty != "none":
+                ystd_arr = std[:, iy, ix].astype(float, copy=False)
+
+            m = np.isfinite(y)
+            if ystd_arr is not None:
+                m &= np.isfinite(ystd_arr)
+
+            if not np.any(m):
+                idx += 1
+                continue
+            _plot_timeseries(
+                ax,
+                t_all[m],
+                y[m],
+                color=colors[idx],
+                ylabel=ylabel,
+                label=str(labels[iy, ix]),
+                uncertainty=uncertainty,
+                ystd=ystd_arr[m] if ystd_arr is not None else None,
+                marker=str(markers[idx]),
+                markersize=3.0,
+            )
+            idx += 1
+
+    ax.legend(loc="center right", fontsize=9 * k, framealpha=0.85)
+    return fig, ax, None

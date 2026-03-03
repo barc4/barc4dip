@@ -111,7 +111,8 @@ def plt_image(
     return fig, ax, im
 
 
-def plt_speckle_tiles_metric(img: np.ndarray,
+def plt_speckle_tiles_metric(
+    img: np.ndarray,
     stats: dict,
     metric_path: str | Sequence[str],
     *,
@@ -168,7 +169,6 @@ def plt_speckle_tiles_metric(img: np.ndarray,
             f"img must be a 2D numpy array; got {type(img)} shape={getattr(img, 'shape', None)!r}"
         )
 
-
     meta = stats.get("meta")
     tiles = stats.get("tiles")
     if not isinstance(meta, dict) or not isinstance(tiles, dict):
@@ -182,6 +182,18 @@ def plt_speckle_tiles_metric(img: np.ndarray,
         raise ValueError("metric_path must be like ('grain','lx') or 'grain.lx'")
 
     group, metric = parts
+
+    units = meta.get("units", {})
+    unit = None
+    if isinstance(units, dict):
+        group_units = units.get(group)
+        if isinstance(group_units, dict):
+            unit = group_units.get(metric)
+
+    if isinstance(unit, str) and unit.strip() != "":
+        metric_with_unit = f"{metric} ({unit})"
+    else:
+        metric_with_unit = metric
 
     group_block = tiles.get(group)
     if not isinstance(group_block, dict):
@@ -240,7 +252,7 @@ def plt_speckle_tiles_metric(img: np.ndarray,
     ax.set_ylabel("y (px)")
 
     if title is None:
-        title = f"{metric}"
+        title = metric_with_unit
     ax.set_title(title, fontsize=14 * k)
 
     x0, x1 = ax.get_xlim()

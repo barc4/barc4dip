@@ -13,11 +13,12 @@ from .image import (
     plt_histogram,
 )
 
-from .stack import plt_displacement
+from .stack import plt_displacement, plt_speckle_stack_metric
 
 __all__ = [
     "plt_image",
     "plt_speckle_tiles_metric",
     "plt_histogram",
-    "plt_displacement"
+    "plt_displacement",
+    "plt_speckle_stack_metric",
 ]

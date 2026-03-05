@@ -21,9 +21,8 @@ def deconvolve_psf(
     method: _DeconvMethod = "wiener",
     clip: bool = True,
     pad_mode: Literal["reflect"] = "reflect",
-    # --- method-specific knobs (kept minimal, skimage names) ---
     balance: float | None = None,  # wiener
-    num_iter: int = 30,  # richardson_lucy
+    num_iter: int = 50,  # richardson_lucy
     filter_epsilon: float | None = None,  # richardson_lucy (stability)
     reg: float | None = None,  # unsupervised_wiener
     user_params: dict | None = None,  # unsupervised_wiener
@@ -112,9 +111,8 @@ def deconvolve_psf(
     if pad_mode != "reflect":
         raise ValueError("Only pad_mode='reflect' is supported (by design).")
 
-    # defaults chosen for "works out-of-the-box" without exposing many knobs
     if balance is None and method == "wiener":
-        balance = 0.01  # conservative; user can override
+        balance = 0.01
 
     img = images.astype(np.float32, copy=False)
     is_stack = img.ndim == 3
@@ -149,7 +147,9 @@ def deconvolve_psf(
 
     T = int(img.shape[0])
     serial_mode = (not parallel) or (n_jobs is not None and int(n_jobs) <= 1)
-
+    if parallel is True and n_jobs is None:
+        n_jobs = -1
+        
     if serial_mode:
         out = np.empty_like(img, dtype=np.float32)
         for t in range(T):
@@ -249,22 +249,18 @@ def _deconv_one_frame(
     if frame.ndim != 2:
         raise ValueError("Internal error: frame must be 2D.")
 
-    # Reflect padding to reduce boundary artifacts.
     py = int(psf.shape[0] // 2)
     px = int(psf.shape[1] // 2)
     padded = np.pad(frame, ((py, py), (px, px)), mode=pad_mode)
 
-    # Normalize to avoid skimage's clip=True collapsing high-dynamic-range detector data.
     scale = float(np.nanmax(np.abs(padded)))
     if not np.isfinite(scale) or scale == 0.0:
-        # nothing to deconvolve
         out = np.zeros_like(padded, dtype=np.float32)
         return out[py:-py, px:-px]
 
     work = (padded / scale).astype(np.float32, copy=False)
 
     if method == "wiener":
-        # balance is required for wiener; upstream sets default if None
         if balance is None:
             raise ValueError("balance must not be None for method='wiener'.")
         restored = restoration.wiener(work, psf, balance=float(balance), clip=bool(clip))

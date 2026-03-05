@@ -4,6 +4,6 @@
 from __future__ import annotations
 
 from . import dtype, range
-from .time import elapsed_time, now
+from .time import elapsed_time, now, progress_done, progress_update
 
-__all__ = ["dtype", "range", "elapsed_time", "now"]
+__all__ = ["dtype", "range", "elapsed_time", "now", "progress_update", "progress_done"]

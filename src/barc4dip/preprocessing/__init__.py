@@ -7,10 +7,14 @@ Unified public processing API for barc4dip.
 
 from __future__ import annotations
 
+from .filters import (
+    deconvolve_psf,
+)
 from .normalize import (
     flat_field_correction,
 )
 
 __all__ = [
     "flat_field_correction",
+    "deconvolve_psf",
 ]

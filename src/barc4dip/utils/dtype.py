@@ -8,7 +8,9 @@ dtype conversions
 from __future__ import annotations
 
 import numpy as np
+
 from .range import filtered_minmax_range
+
 
 def to_uint16(data: np.ndarray, *, median_size: int = 3, counts_threshold: float = 10.0,
               scaling: float = 1/np.sqrt(2)) -> np.ndarray:

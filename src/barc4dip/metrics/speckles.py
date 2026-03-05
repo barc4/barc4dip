@@ -12,15 +12,14 @@ from typing import Literal, Sequence
 
 import numpy as np
 
+from ..geometry.roi import odd_size, roi_grid_3x3, roi_slices
 from ..maths.radial import radial_mean_binned, radial_mean_interpolated
 from ..maths.stats import distance_at_fraction_from_peak, width_at_fraction
 from ..signal.corr import autocorr2d
 from ..signal.fft import psd2d
+from ..signal.tracking import track_translation
 from ..utils import elapsed_time, now
 from ..utils.range import percentile_minmax_range
-
-from ..geometry.roi import odd_size, roi_grid_3x3, roi_slices
-from ..signal.tracking import track_translation
 from .common import (
     apply_display_origin,
     choose_tiling_mode,

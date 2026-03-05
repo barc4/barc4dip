@@ -6,6 +6,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.ndimage import median_filter
 
+from ..utils import elapsed_time, now
+
 
 def flat_field_correction(
     images: np.ndarray,
@@ -15,6 +17,7 @@ def flat_field_correction(
     scale: str = "flat_median",
     bad_pixel_removal: bool = False,
     eps: float | None = None,
+    verbose: bool = False,
 ) -> np.ndarray:
     """
     Apply flat-field (gain) correction to one or multiple images.
@@ -56,6 +59,8 @@ def flat_field_correction(
             If None, a relative threshold based on the median denominator
             is used.
 
+        verbose (bool):
+            If True, prints elapsed time.
     Returns:
         np.ndarray:
             Gain-corrected image(s) as float32, with the same shape
@@ -67,6 +72,8 @@ def flat_field_correction(
         ValueError:
             If input shapes are incompatible.
     """
+    t0 = now()
+
     if scale not in {"none", "flat_mean", "flat_median"}:
         raise ValueError(f"Invalid scale option: {scale}")
 
@@ -131,5 +138,8 @@ def flat_field_correction(
             out[bad] = repaired[bad]
         else:
             out[:, bad] = repaired[:, bad]
+
+    if verbose:
+        elapsed_time(t0)
 
     return out.astype(np.float32, copy=False)

@@ -5,14 +5,13 @@ from __future__ import annotations
 
 from typing import Literal, Sequence
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from .style import start_plotting
-
 
 _TemporalKey = Literal["abs", "inc"]
 _ViewKind = Literal["trajectory", "timeseries"]

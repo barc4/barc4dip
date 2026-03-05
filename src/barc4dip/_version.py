@@ -14,8 +14,9 @@ try:
 except PackageNotFoundError:
 
     try:
-        import tomllib
         from pathlib import Path
+
+        import tomllib
 
         root = Path(__file__).resolve().parents[2]
         data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))

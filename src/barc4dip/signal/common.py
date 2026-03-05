@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
+
 def _uniform_step(axis: np.ndarray, name: str) -> float:
     a = np.asarray(axis, dtype=float)
     if a.ndim != 1 or a.size < 2:

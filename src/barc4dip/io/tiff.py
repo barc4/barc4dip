@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
+
 from ..utils.dtype import to_uint16
 
 

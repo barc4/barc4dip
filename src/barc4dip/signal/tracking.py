@@ -9,7 +9,6 @@ import numpy as np
 
 from ..geometry.roi import embed_roi, roi_slices
 
-
 _TrackingMethod = Literal["phase"]
 _Tracker = Callable[..., tuple[float, float, float, float]]
 _TRACKERS: dict[str, _Tracker] = {}

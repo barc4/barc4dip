@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from time import time
 
+
 def now():
     """
     Return the current wall-clock time.

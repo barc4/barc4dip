@@ -5,11 +5,13 @@ from __future__ import annotations
 
 from typing import Literal, Sequence
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+
 from .style import igor_cmap, srw_cmap, start_plotting
 
 
@@ -28,9 +30,15 @@ def plt_image(
     display_origin: Literal["upper", "lower"] = "lower",
     colorbar: bool = True,
     cbar_label: str | None = None,
+    roi: slice | tuple[slice, slice] | None = None,
+    roi_zoom: bool = False,
+    roi_color: str = "orange",
+    roi_lw: float = 1.75,
+    roi_alpha: float = 0.95,
 ) -> tuple[Figure, Axes, object]:
     """
-    Plot an image in pixel coordinates with an optional size-matched colorbar.
+    Plot an image in pixel coordinates with an optional size-matched colorbar,
+    and optionally overlay a rectangular ROI defined by Python slices.
 
     Parameters
     ----------
@@ -45,13 +53,24 @@ def plt_image(
     cmap : str
         Colormap name or special keywords ('srw', 'igor').
     xmin, xmax, ymin, ymax : float | None
-        Axis limits in pixels.
+        Axis limits in pixels (applied after ROI zoom if enabled).
     display_origin : {"upper", "lower"}
         Display origin passed to ``imshow(origin=...)``.
     colorbar : bool
         If True, attach a colorbar whose height matches the image axes.
     cbar_label : str | None
         Optional colorbar label.
+    roi : slice | (slice, slice) | None
+        ROI selection in numpy indexing order (y, x). Examples:
+            - roi=(slice(100, 200), slice(300, 500))
+            - roi=np.s_[100:200, 300:500]
+            - roi=slice(100, 200)  # interpreted as y slice, full x
+        Steps must be 1 (or None).
+    roi_zoom : bool
+        If True, set axis limits to the ROI bounds (with the correct direction
+        for the chosen display_origin).
+    roi_color, roi_lw, roi_alpha
+        Style for ROI rectangle overlay.
 
     Returns
     -------
@@ -80,6 +99,8 @@ def plt_image(
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
+    extent = (0.0, float(nx), 0.0, float(ny))
+
     im = ax.imshow(
         img,
         origin=display_origin,
@@ -88,6 +109,7 @@ def plt_image(
         vmax=vmax,
         interpolation="none",
         aspect="equal",
+        extent=extent,
     )
 
     ax.set_xlabel("x (px)")
@@ -95,6 +117,27 @@ def plt_image(
 
     if title:
         ax.set_title(title, fontsize=15 * k)
+
+    if roi is not None:
+        x0, y0, w, h, ysl, xsl = _roi_to_rect(roi, ny=ny, nx=nx)
+
+        rect = Rectangle(
+            (x0, y0),
+            w,
+            h,
+            fill=False,
+            edgecolor=roi_color,
+            linewidth=roi_lw,
+            alpha=roi_alpha,
+        )
+        ax.add_patch(rect)
+
+        if roi_zoom:
+            ax.set_xlim(left=float(xsl.start), right=float(xsl.stop))
+            if display_origin == "lower":
+                ax.set_ylim(bottom=float(ysl.start), top=float(ysl.stop))
+            else:
+                ax.set_ylim(bottom=float(ysl.stop), top=float(ysl.start))
 
     if xmin is not None or xmax is not None:
         ax.set_xlim(left=xmin, right=xmax)
@@ -109,6 +152,61 @@ def plt_image(
             cbar.set_label(cbar_label)
 
     return fig, ax, im
+
+def _as_unit_step_slice(s: slice, *, n: int, name: str) -> slice:
+    if not isinstance(s, slice):
+        raise TypeError(f"{name} must be a slice; got {type(s)!r}")
+
+    step = 1 if s.step is None else s.step
+    if step != 1:
+        raise ValueError(f"{name}.step must be 1 or None for a rectangular ROI; got {s.step!r}")
+
+    start = 0 if s.start is None else int(s.start)
+    stop = n if s.stop is None else int(s.stop)
+
+    if start < 0:
+        start = n + start
+    if stop < 0:
+        stop = n + stop
+
+    start = max(0, min(n, start))
+    stop = max(0, min(n, stop))
+
+    if stop < start:
+        start, stop = stop, start
+
+    return slice(start, stop, 1)
+
+
+def _roi_to_rect(
+    roi: slice | tuple[slice, slice],
+    *,
+    ny: int,
+    nx: int,
+) -> tuple[float, float, float, float, slice, slice]:
+    """
+    Convert ROI slices to rectangle params in pixel coords.
+
+    Returns
+    -------
+    x0, y0, w, h, yslice, xslice
+    """
+    if isinstance(roi, tuple):
+        if len(roi) != 2:
+            raise ValueError("roi tuple must be (yslice, xslice)")
+        ysl, xsl = roi
+    else:
+        ysl, xsl = roi, slice(None)
+
+    ysl = _as_unit_step_slice(ysl, n=ny, name="roi[0] (yslice)")
+    xsl = _as_unit_step_slice(xsl, n=nx, name="roi[1] (xslice)")
+
+    y0 = float(ysl.start)
+    x0 = float(xsl.start)
+    h = float(ysl.stop - ysl.start)
+    w = float(xsl.stop - xsl.start)
+
+    return x0, y0, w, h, ysl, xsl
 
 
 def plt_speckle_tiles_metric(

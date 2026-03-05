@@ -150,7 +150,6 @@ def plt_displacement(
     if not isinstance(meta, dict):
         raise ValueError("stack_stats must contain dict key 'meta'")
 
-    # --- NEW: unit lookup for temporal displacement ---
     units = meta.get("units", {})
     unit_px = "px"
     if isinstance(units, dict):
@@ -159,7 +158,6 @@ def plt_displacement(
             u_dx = temporal_units.get("dx")
             if isinstance(u_dx, str) and u_dx.strip() != "":
                 unit_px = u_dx
-    # -------------------------------------------------
 
     block = _get_temporal_block(stack_stats, temporal=temporal)
 
@@ -228,7 +226,7 @@ def plt_displacement(
         ax.set_xlabel(f"dx ({unit_px})")
         ax.set_ylabel(f"dy ({unit_px})")
         if title is None:
-            ax.set_title(f"Speckle displacement ({temporal})", fontsize=15 * k)
+            ax.set_title(f"speckle displacement ({temporal})", fontsize=15 * k)
         else:
             ax.set_title(title, fontsize=15 * k)
         ax.set_aspect(1)
@@ -261,7 +259,7 @@ def plt_displacement(
     axes[-1].set_xlabel("(frame)")
 
     if title is None:
-        fig.suptitle(f"Speckle displacement ({temporal})", fontsize=15 * k)
+        fig.suptitle(f"speckle displacement ({temporal})", fontsize=15 * k)
     else:
         fig.suptitle(title, fontsize=15 * k)
 
@@ -305,7 +303,6 @@ def plt_speckle_stack_metric(
 
     group, metric = _parse_metric_path(metric_path)
 
-    # --- NEW: units-aware default title and y-label ---
     unit = None
     if isinstance(units, dict):
         group_units = units.get(group)
@@ -318,16 +315,20 @@ def plt_speckle_stack_metric(
     else:
         metric_with_unit = metric
         ylabel = metric
-    # -------------------------------------------------
 
     nrows = 1
     fig_h = 3.0
-    fig_w = 8.0
+    fig_w = 9.0
 
     fig, ax = plt.subplots(nrows=nrows, ncols=1, sharex=True, figsize=(fig_w, fig_h))
 
     if title is None:
-        title = f"{scope}: {group}.{metric_with_unit}"
+        if scope == "full":
+            tlt = "from full image"
+        else:
+            tlt = "from tiled image"
+
+        title = f"{metric} {tlt}"
     ax.set_title(title, fontsize=15 * k)
     ax.set_xlabel("(frame)")
     ax.set_ylabel(ylabel)
@@ -444,6 +445,9 @@ def plt_speckle_stack_metric(
                 markersize=3.0,
             )
             idx += 1
-
+    if T > 1:
+        xmin, xmax = ax.get_xlim()
+        tmax = t_all[-1]
+        ax.set_xlim(xmin, 1.18 * tmax)
     ax.legend(loc="center right", fontsize=9 * k, framealpha=0.85)
     return fig, ax, None

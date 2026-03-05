@@ -63,7 +63,6 @@ _SPECKLE_UNITS: dict[str, dict[str, str]] = {
         "sig_fy": "1/px",
         "rf": "",
     },
-    # stack-only block (but safe to attach to speckle_stats too)
     "temporal": {
         "dx": "px",
         "dy": "px",

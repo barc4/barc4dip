@@ -56,7 +56,7 @@ def sharpness_stats(
     display_origin: Literal["upper", "lower"] = "lower",
     saturation_value: float | None = 65535.0,
     eps: float = 1e-6,
-    verbose: bool = False,
+    verbose: bool = True,
 ) -> dict:
     """
     Compute sharpness metrics on a single 2D image.
@@ -252,7 +252,7 @@ def sharpness_stack_stats(
     stack: np.ndarray,
     *,
     metrics: str | Sequence[str] = "all",
-    tiles: bool = False,
+    tiles: bool = True,
     display_origin: Literal["upper", "lower"] = "lower",
     saturation_value: float | None = 65535.0,
     eps: float = 1e-6,
@@ -284,7 +284,6 @@ def sharpness_stack_stats(
     if T < 1:
         raise ValueError("stack must contain at least one frame.")
 
-    # Normalize groups once (same logic as sharpness_stats)
     groups = normalize_groups(
         metrics,
         all_groups=_ALL_SHARPNESS_GROUPS,
@@ -292,11 +291,10 @@ def sharpness_stack_stats(
         param_name="metrics",
     )
 
+    serial_mode = (not parallel) or (n_jobs is not None and int(n_jobs) <= 1)
     if parallel is True and n_jobs is None:
         n_jobs = -1
-
-    serial_mode = (not parallel) or (n_jobs is not None and int(n_jobs) <= 1)
-
+        
     tile_mode, tile_shape_px = choose_tiling_mode(H, W, tiles=tiles)
 
     def _one(t: int) -> dict:

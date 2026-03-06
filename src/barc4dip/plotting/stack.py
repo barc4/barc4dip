@@ -266,7 +266,7 @@ def plt_displacement(
     return fig, axes, None
 
 
-def plt_speckle_stack_metric(
+def plt_stack_metric(
     stack_stats: dict,
     metric_path: str | Sequence[str],
     *,
@@ -279,7 +279,7 @@ def plt_speckle_stack_metric(
     title: str | None = None,
 ) -> tuple[Figure, Axes, None]:
     """
-    Plot a single metric as a time series from ``speckle_stack_stats`` output.
+    Plot a single metric as a time series from ``XXX_stack_stats`` output.
 
     This is a 1-panel analogue of ``plt_displacement(kind="timeseries")``:
     - scope="full": plot one curve from stack_stats["full"][group][metric]

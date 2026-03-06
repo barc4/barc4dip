@@ -209,7 +209,7 @@ def _roi_to_rect(
     return x0, y0, w, h, ysl, xsl
 
 
-def plt_speckle_tiles_metric(
+def plt_tiles_metric(
     img: np.ndarray,
     stats: dict,
     metric_path: str | Sequence[str],
@@ -226,7 +226,7 @@ def plt_speckle_tiles_metric(
     display_origin: Literal["upper", "lower"] | None = None,
 ) -> tuple[Figure, Axes, object]:
     """
-    Plot a speckle image and overlay a 3x3 tile grid with metric mean ± std.
+    Plot an image and overlay a 3x3 tile grid with metric mean ± std.
 
     Parameters
     ----------

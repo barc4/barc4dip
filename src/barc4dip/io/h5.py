@@ -10,8 +10,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-import numpy as np
 import h5py
+import numpy as np
 
 
 def read_h5(image_path: str | Sequence[str], *, image_number: int = None) -> np.ndarray:

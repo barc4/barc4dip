@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import warnings
-from typing import Callable, Literal
+from typing import Callable, Literal, Sequence
+
 
 import numpy as np
 
@@ -375,3 +376,89 @@ def tiled_scalar_fields(
         return out
 
     raise ValueError("tile_mode must be 'tiles_3x3' or 'subtiles_9x9'.")
+
+
+def stack_time_series(values: list[object]) -> object:
+    """Stack per-frame outputs along a new leading time axis.
+
+    Notes
+    -----
+    - Dicts are stacked recursively (same keys expected per frame).
+    - NumPy arrays are stacked with np.stack(axis=0).
+    - Scalars are stacked into a 1D NumPy array of length T.
+    """
+    if not values:
+        raise ValueError("No values provided for stacking.")
+
+    v0 = values[0]
+
+    if isinstance(v0, dict):
+        out: dict = {}
+        keys = v0.keys()
+        for k in keys:
+            out[k] = stack_time_series([v[k] for v in values])
+        return out
+
+    if isinstance(v0, np.ndarray):
+        return np.stack([np.asarray(v) for v in values], axis=0)
+
+    if isinstance(v0, (float, int, np.floating, np.integer, bool, np.bool_)):
+        return np.asarray(values)
+
+    return list(values)
+
+
+def normalize_groups(
+    groups: str | Sequence[str],
+    *,
+    all_groups: set[str],
+    context: str,
+    param_name: str = "metrics",
+) -> set[str]:
+    """Normalize a group selector into a validated set of group keys.
+
+    Parameters
+    ----------
+    groups
+        Group selector. Either "all" or a single group name, or a sequence of
+        group names.
+    all_groups
+        Set of valid group keys. Used when ``groups == "all"`` and for validation.
+    context
+        Context string used in error messages (e.g. "speckles", "sharpness").
+    param_name
+        Name of the parameter being normalized (default: "metrics").
+
+    Returns
+    -------
+    set[str]
+        Validated set of group keys.
+
+    Raises
+    ------
+    TypeError
+        If ``groups`` is not a string or a sequence of strings.
+    ValueError
+        If an unknown group key is provided.
+    """
+    if isinstance(groups, str):
+        keys = {g.strip() for g in groups.split(",")} if "," in groups else {groups.strip()}
+    elif isinstance(groups, Sequence):
+        keys = set()
+        for g in groups:
+            if not isinstance(g, str):
+                raise TypeError(f"{context}: {param_name} must be str or a sequence of str")
+            keys.add(g.strip())
+    else:
+        raise TypeError(f"{context}: {param_name} must be str or a sequence of str")
+
+    if "all" in keys:
+        return set(all_groups)
+
+    unknown = sorted(k for k in keys if k not in all_groups)
+    if unknown:
+        allowed = ", ".join(sorted(all_groups))
+        bad = ", ".join(unknown)
+        raise ValueError(f"{context}: unknown {param_name} group(s): {bad}. Allowed: {allowed}")
+
+    return keys

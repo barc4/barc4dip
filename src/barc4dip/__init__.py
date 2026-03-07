@@ -8,6 +8,7 @@ from ._version import __version__
 from .io import read_image, write_image
 from .metrics import (
     distribution_moments,
+    sharpness_stack_stats,
     sharpness_stats,
     speckle_stack_stats,
     speckle_stats,
@@ -31,6 +32,7 @@ __all__ = [
     "speckle_stats",
     "speckle_stack_stats",
     "sharpness_stats",
+    "sharpness_stack_stats",
     "distribution_moments",
     "logbook_report",
 ]

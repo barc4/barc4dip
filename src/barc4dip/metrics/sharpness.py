@@ -13,35 +13,87 @@ Pattern Recognition 46(5), 1415-1432 (2013).
 from __future__ import annotations
 
 import logging
-from typing import Literal, Sequence, Union
+from typing import Literal, Sequence
 
 import numpy as np
 from scipy import ndimage
 
-from ..maths.radial import radial_mean_binned, radial_mean_interpolated
+from ..maths.radial import radial_mean_interpolated
 from ..maths.stats import distance_at_fraction_from_peak, width_at_fraction
 from ..signal.corr import autocorr2d
 from ..signal.fft import psd2d
-from ..utils import elapsed_time, now
+from ..utils import elapsed_time, now, progress_done, progress_update
 from .common import (
     apply_display_origin,
     choose_tiling_mode,
     tiled_scalar_fields,
     tiles_meta,
+    stack_time_series,
+    normalize_groups,
 )
 from .statistics import distribution_moments
 
 logger = logging.getLogger(__name__)
 
+_SHARPNESS_UNITS: dict[str, dict[str, str]] = {
+    "stats": {
+        "mean": "a.u.",
+        "std": "a.u.",
+        "variance": "a.u.^2",
+        "skewness": "",
+        "kurtosis": "",
+        "frac_zero": "",
+        "frac_sat": "",
+        "SNRdB": "dB",
+    },
+    "gradient": {
+        "tenengrad": "a.u.^2",
+        "ex": "a.u.^2",
+        "ey": "a.u.^2",
+        "re": "",
+    },
+    "laplacian": {
+        "laplacian_variance": "a.u.^2",
+    },
+    "spectral": {
+        "spectral_entropy": "",
+    },
+    "autocorrelation": {
+        "sx": "1/px",
+        "sy": "1/px",
+        "seq": "1/px",
+        "r": "",
+    },
+    "eigenvalues": {
+        "eigenvalues": "",
+        "e1": "",
+        "e2": "",
+        "re": "",
+    },
+}
+
+_ALL_SHARPNESS_GROUPS: set[str] = {
+    "stats",
+    "gradient",
+    "laplacian",
+    "spectral",
+    "autocorrelation",
+    "eigenvalues",
+}
+
+# ---------------------------------------------------------------------------
+# main functions
+# ---------------------------------------------------------------------------
+
 def sharpness_stats(
     image: np.ndarray,
     *,
     metrics: str | Sequence[str] = "all",
-    tiles: bool = False,
+    tiles: bool = True,
     display_origin: Literal["upper", "lower"] = "lower",
     saturation_value: float | None = 65535.0,
     eps: float = 1e-6,
-    verbose: bool = False,
+    verbose: bool = True,
 ) -> dict:
     """
     Compute sharpness metrics on a single 2D image.
@@ -108,11 +160,10 @@ def sharpness_stats(
     if image.ndim != 2:
         raise ValueError(f"Expected 2D array, got ndim={image.ndim}")
 
-    # Orientation ergonomics (shared across all metric aggregators).
     image = apply_display_origin(image, display_origin=display_origin)
 
     h, w = image.shape
-    groups = _normalize_sharpness_groups(metrics)
+    groups = normalize_groups(metrics, all_groups=_ALL_SHARPNESS_GROUPS, context="sharpness", param_name="metrics")
 
     if verbose:
         logger.info("\nsharpness stats for a (h x w: %.0f x %.0f) image:", h, w)
@@ -123,11 +174,11 @@ def sharpness_stats(
             "display_origin": display_origin,
             "input_shape": (int(h), int(w)),
             "requested_groups": sorted(groups),
+            "units": _SHARPNESS_UNITS,
         },
         "full": {},
     }
 
-    # --- full-frame ---
     if "stats" in groups:
         try:
             out["full"]["stats"] = distribution_moments(
@@ -158,7 +209,6 @@ def sharpness_stats(
     if "eigenvalues" in groups:
         out["full"]["eigenvalues"] = eigenvalues(image, verbose=verbose)
 
-    # --- tiles (same policy as speckle_stats via common.py) ---
     MIN_TILE_PX = 128
     mode, tile_shape_px = choose_tiling_mode(h, w, tiles=tiles, min_tile_px=MIN_TILE_PX)
     if mode == "off":
@@ -236,24 +286,120 @@ def sharpness_stats(
 
     return out
 
+def sharpness_stack_stats(
+    stack: np.ndarray,
+    *,
+    metrics: str | Sequence[str] = "all",
+    tiles: bool = True,
+    display_origin: Literal["upper", "lower"] = "lower",
+    saturation_value: float | None = 65535.0,
+    eps: float = 1e-6,
+    verbose: bool = True,
+    parallel: bool = True,
+    n_jobs: int | None = None,
+) -> dict:
+    """Compute sharpness metrics over time for a 3D stack.
 
-def _normalize_sharpness_groups(metrics: str | Sequence[str]) -> set[str]:
-    if isinstance(metrics, str):
-        m = metrics.strip().lower()
-        if m == "all":
-            return {"stats", "gradient", "laplacian", "spectral", "autocorrelation", "eigenvalues"}
-        return {m}
+    This is the time-stack analogue of :func:`sharpness_stats`.
+    Per-frame metrics are computed and stacked along a leading time axis ``T``.
 
-    groups: set[str] = set()
-    for item in metrics:
-        if not isinstance(item, str):
-            raise TypeError("metrics must be a str or a sequence of str")
-        m = item.strip().lower()
-        if m == "all":
-            groups.update({"stats", "gradient", "laplacian", "spectral", "autocorrelation", "eigenvalues"})
-        else:
-            groups.add(m)
-    return groups
+    Notes
+    -----
+    - Serial mode prints a progress bar using ``progress_update/progress_done``.
+    - Parallel mode uses joblib with ``prefer="threads"`` and optional verbosity.
+    """
+    from joblib import Parallel, delayed
+
+    prefer = "threads"
+    t0 = now()
+
+    if not isinstance(stack, np.ndarray):
+        raise TypeError("sharpness_stack_stats expects a numpy.ndarray")
+    if stack.ndim != 3:
+        raise ValueError(f"stack must be a 3D array with shape (T, H, W); got ndim={stack.ndim}")
+
+    T, H, W = (int(stack.shape[0]), int(stack.shape[1]), int(stack.shape[2]))
+    if T < 1:
+        raise ValueError("stack must contain at least one frame.")
+
+    groups = normalize_groups(
+        metrics,
+        all_groups=_ALL_SHARPNESS_GROUPS,
+        context="sharpness",
+        param_name="metrics",
+    )
+
+    serial_mode = (not parallel) or (n_jobs is not None and int(n_jobs) <= 1)
+    if parallel is True and n_jobs is None:
+        n_jobs = -1
+        
+    tile_mode, tile_shape_px = choose_tiling_mode(H, W, tiles=tiles)
+
+    def _one(t: int) -> dict:
+        return sharpness_stats(
+            stack[t, :, :],
+            metrics=metrics,
+            tiles=tiles,
+            display_origin=display_origin,
+            saturation_value=saturation_value,
+            eps=eps,
+            verbose=False,
+        )
+
+    if serial_mode:
+        per_frame: list[dict] = []
+        last = -1
+        for t in range(T):
+            if verbose:
+                last = progress_update("Sharpness stats loop", t, T, last)
+            per_frame.append(_one(t))
+        if verbose:
+            progress_done("Sharpness stats loop")
+    else:
+        jb_verbose = 10 if verbose else 0
+        per_frame = Parallel(n_jobs=n_jobs, prefer=prefer, verbose=jb_verbose)(
+            delayed(_one)(t) for t in range(T)
+        )
+
+    out_full = stack_time_series([d["full"] for d in per_frame])
+
+    out_tiles = None
+    if tiles and all(isinstance(d.get("tiles"), dict) for d in per_frame):
+        out_tiles = stack_time_series([d["tiles"] for d in per_frame])
+
+    meta: dict = {
+        "kind": "sharpness_stack_stats",
+        "input_shape": (H, W),
+        "stack_shape": (T, H, W),
+        "n_frames": T,
+        "display_origin": display_origin,
+        "requested_groups": sorted(groups),
+        "units": _SHARPNESS_UNITS,  
+        "parallel": {
+            "enabled": bool(not serial_mode),
+            "n_jobs": None if serial_mode else n_jobs,
+        },
+    }
+    meta.update(tiles_meta(H, W, tile_mode=tile_mode, tile_shape_px=tile_shape_px))
+
+    out: dict = {"meta": meta, "full": out_full}
+    if out_tiles is not None:
+        out["tiles"] = out_tiles
+
+    if verbose:
+        logger.info(
+            "> sharpness_stack_stats | frames=%d | parallel=%s | n_jobs=%s | elapsed=%s s",
+            T,
+            "yes" if not serial_mode else "no",
+            "1" if serial_mode else str(n_jobs),
+            int(elapsed_time(t0)),
+        )
+
+    return out
+
+# ---------------------------------------------------------------------------
+# gradient
+# ---------------------------------------------------------------------------
 
 def tenengrad(
     image: np.ndarray,
@@ -328,6 +474,10 @@ def tenengrad(
 
     return out
 
+# ---------------------------------------------------------------------------
+# laplacian
+# ---------------------------------------------------------------------------
+
 def laplacian_variance(
     image: np.ndarray,
     *,
@@ -378,6 +528,9 @@ def laplacian_variance(
 
     return var
 
+# ---------------------------------------------------------------------------
+# spectral
+# ---------------------------------------------------------------------------
 
 def spectral_entropy(
     image: np.ndarray,
@@ -472,6 +625,9 @@ def spectral_entropy(
 
     return Hn
 
+# ---------------------------------------------------------------------------
+# autocorrelation
+# ---------------------------------------------------------------------------
 
 def inverse_autocorr_width(
     image: np.ndarray,
@@ -595,6 +751,9 @@ def inverse_autocorr_width(
 
     return out
 
+# ---------------------------------------------------------------------------
+# eigenvalues
+# ---------------------------------------------------------------------------
 
 def eigenvalues(
     image: np.ndarray,

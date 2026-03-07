@@ -7,25 +7,25 @@ speckle field metrics
 from __future__ import annotations
 
 import logging
-import warnings
 from typing import Literal, Sequence
 
 import numpy as np
 
+from ..geometry.roi import odd_size, roi_grid_3x3, roi_slices
 from ..maths.radial import radial_mean_binned, radial_mean_interpolated
 from ..maths.stats import distance_at_fraction_from_peak, width_at_fraction
 from ..signal.corr import autocorr2d
 from ..signal.fft import psd2d
-from ..utils import elapsed_time, now
-from ..utils.range import percentile_minmax_range
-
-from ..geometry.roi import odd_size, roi_grid_3x3, roi_slices
 from ..signal.tracking import track_translation
+from ..utils import elapsed_time, now, progress_done, progress_update
+from ..utils.range import percentile_minmax_range
 from .common import (
     apply_display_origin,
     choose_tiling_mode,
     tiled_scalar_fields,
     tiles_meta,
+    stack_time_series,
+    normalize_groups,
 )
 from .statistics import distribution_moments
 
@@ -63,7 +63,6 @@ _SPECKLE_UNITS: dict[str, dict[str, str]] = {
         "sig_fy": "1/px",
         "rf": "",
     },
-    # stack-only block (but safe to attach to speckle_stats too)
     "temporal": {
         "dx": "px",
         "dy": "px",
@@ -74,6 +73,11 @@ _SPECKLE_UNITS: dict[str, dict[str, str]] = {
     },
 }
 
+_ALL_SPECKLE_GROUPS: set[str] = {"amplitude", "grain", "bandwidth", "stats"}
+
+# ---------------------------------------------------------------------------
+# main functions
+# ---------------------------------------------------------------------------
 
 def speckle_stats(
     image: np.ndarray,
@@ -144,7 +148,7 @@ def speckle_stats(
     image = apply_display_origin(image, display_origin=display_origin)
 
     h, w = image.shape
-    groups = _normalize_metric_groups(metrics)
+    groups = normalize_groups(metrics, all_groups=_ALL_SPECKLE_GROUPS, context="speckles", param_name="metrics")
 
     if verbose:
         logger.info("\nspeckle stats for a (h x w: %.0f x %.0f) image:", h, w)
@@ -250,25 +254,6 @@ def speckle_stats(
     return out
 
 
-def _normalize_metric_groups(metrics: str | Sequence[str]) -> set[str]:
-    if isinstance(metrics, str):
-        m = metrics.strip().lower()
-        if m == "all":
-            return {"amplitude", "grain", "bandwidth", "stats"}
-        return {m}
-
-    groups: set[str] = set()
-    for item in metrics:
-        if not isinstance(item, str):
-            raise TypeError("metrics must be a str or a sequence of str")
-        m = item.strip().lower()
-        if m == "all":
-            groups.update({"amplitude", "grain", "bandwidth", "stats"})
-        else:
-            groups.add(m)
-    return groups
-
-
 def speckle_stack_stats(
     stack: np.ndarray,
     *,
@@ -308,18 +293,8 @@ def speckle_stack_stats(
         raise ValueError("stack must contain at least one frame.")
 
     serial_mode = (not parallel) or (n_jobs is not None and int(n_jobs) <= 1)
-
-    def _progress_update(loop_name: str, t: int, last_bucket: int) -> int:
-        bucket = int((10 * t) // max(1, T - 1))  # 0..10
-        if bucket != last_bucket:
-            progress = 10 * bucket
-            bar = "#" * bucket + "-" * (10 - bucket)
-            print(f"\r{loop_name}: [{bar}] {progress:3d}%", end="", flush=True)
-            return bucket
-        return last_bucket
-
-    def _progress_done(loop_name: str) -> None:
-        print(f"\r{loop_name}: [##########] 100%", flush=True)
+    if parallel is True and n_jobs is None:
+        n_jobs = -1
 
     def _speckle_stats_one(t: int) -> dict:
         frame = stack[t, :, :]
@@ -338,20 +313,20 @@ def speckle_stack_stats(
         last = -1
         for t in range(T):
             if verbose:
-                last = _progress_update("Speckle stats loop", t, last)
+                last = progress_update("Speckle stats loop", t, T, last)
             per_frame.append(_speckle_stats_one(t))
         if verbose:
-            _progress_done("Speckle stats loop")
+            progress_done("Speckle stats loop")
     else:
         jb_verbose = 10 if verbose else 0
         per_frame = Parallel(n_jobs=n_jobs, prefer=prefer, verbose=jb_verbose)(
             delayed(_speckle_stats_one)(t) for t in range(T)
         )
 
-    out_full = _stack_time_series([d["full"] for d in per_frame])
+    out_full = stack_time_series([d["full"] for d in per_frame])
     out_tiles = None
     if tiles and all(isinstance(d.get("tiles"), dict) for d in per_frame):
-        out_tiles = _stack_time_series([d["tiles"] for d in per_frame])
+        out_tiles = stack_time_series([d["tiles"] for d in per_frame])
 
     frame0 = stack[0, :, :]
     grain0 = grain(frame0, verbose=False)
@@ -418,7 +393,7 @@ def speckle_stack_stats(
         last = -1
         for t in range(T):
             if verbose:
-                last = _progress_update("Speckle stability loop", t, last)
+                last = progress_update("Speckle stability loop", t, T, last)
 
             dx_a, dy_a, dx_i, dy_i = _track_one_time_step(t)
             dx_abs_tiles[t, :, :] = dx_a
@@ -427,7 +402,7 @@ def speckle_stack_stats(
             dy_inc_tiles[t, :, :] = dy_i
 
         if verbose:
-            _progress_done("Speckle stability loop")
+            progress_done("Speckle stability loop")
     else:
         jb_verbose = 10 if verbose else 0
         results = Parallel(n_jobs=n_jobs, prefer=prefer, verbose=jb_verbose)(
@@ -491,8 +466,6 @@ def speckle_stack_stats(
         },
         "parallel": {
             "enabled": bool(not serial_mode),
-            "n_jobs": None if serial_mode else n_jobs,
-            "prefer": str(prefer),
             "joblib_verbose": (10 if (not serial_mode and verbose) else 0),
         },
     }
@@ -515,35 +488,6 @@ def speckle_stack_stats(
 
     return out
 
-
-def _stack_time_series(values: list[object]) -> object:
-    """Stack per-frame outputs along a new leading time axis.
-
-    Notes
-    -----
-    - Dicts are stacked recursively (same keys expected per frame).
-    - NumPy arrays are stacked with np.stack(axis=0).
-    - Scalars are stacked into a 1D NumPy array of length T.
-    """
-    if not values:
-        raise ValueError("No values provided for stacking.")
-
-    v0 = values[0]
-
-    if isinstance(v0, dict):
-        out: dict = {}
-        keys = v0.keys()
-        for k in keys:
-            out[k] = _stack_time_series([v[k] for v in values])
-        return out
-
-    if isinstance(v0, np.ndarray):
-        return np.stack([np.asarray(v) for v in values], axis=0)
-
-    if isinstance(v0, (float, int, np.floating, np.integer, bool, np.bool_)):
-        return np.asarray(values)
-
-    return list(values)
 
 # ---------------------------------------------------------------------------
 # Grain

@@ -6,8 +6,10 @@ range (min max) calculations for numpy arrays
 """
 
 from __future__ import annotations
+
 import numpy as np
 from scipy.ndimage import median_filter
+
 
 def filtered_minmax_range(image: np.ndarray, size: int = 3) -> tuple[float, float]:
     """

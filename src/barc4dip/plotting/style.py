@@ -68,3 +68,10 @@ scan_colors = [
 ]
 
 scan_cmap = LinearSegmentedColormap.from_list("scan", scan_colors)
+
+# ---------------------------------------------------------------------------
+# Thin wrapper to plt.show()
+# ---------------------------------------------------------------------------
+
+def show():
+    plt.show()

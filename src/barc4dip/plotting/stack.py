@@ -370,7 +370,9 @@ def plt_stack_metric(
             marker="o",
             markersize=3.0,
         )
-
+        xmin, xmax = ax.get_xlim()
+        tmax = tp[-1]
+        ax.set_xlim(xmin, 1.18 * tmax)
         return fig, ax, None
 
     if scope != "tiles":

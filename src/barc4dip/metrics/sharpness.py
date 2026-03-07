@@ -35,6 +35,43 @@ from .statistics import distribution_moments
 
 logger = logging.getLogger(__name__)
 
+_SHARPNESS_UNITS: dict[str, dict[str, str]] = {
+    "stats": {
+        "mean": "a.u.",
+        "std": "a.u.",
+        "variance": "a.u.^2",
+        "skewness": "",
+        "kurtosis": "",
+        "frac_zero": "",
+        "frac_sat": "",
+        "SNRdB": "dB",
+    },
+    "gradient": {
+        "tenengrad": "a.u.^2",
+        "ex": "a.u.^2",
+        "ey": "a.u.^2",
+        "re": "",
+    },
+    "laplacian": {
+        "laplacian_variance": "a.u.^2",
+    },
+    "spectral": {
+        "spectral_entropy": "",
+    },
+    "autocorrelation": {
+        "sx": "1/px",
+        "sy": "1/px",
+        "seq": "1/px",
+        "r": "",
+    },
+    "eigenvalues": {
+        "eigenvalues": "",
+        "e1": "",
+        "e2": "",
+        "re": "",
+    },
+}
+
 _ALL_SHARPNESS_GROUPS: set[str] = {
     "stats",
     "gradient",
@@ -52,7 +89,7 @@ def sharpness_stats(
     image: np.ndarray,
     *,
     metrics: str | Sequence[str] = "all",
-    tiles: bool = False,
+    tiles: bool = True,
     display_origin: Literal["upper", "lower"] = "lower",
     saturation_value: float | None = 65535.0,
     eps: float = 1e-6,
@@ -137,6 +174,7 @@ def sharpness_stats(
             "display_origin": display_origin,
             "input_shape": (int(h), int(w)),
             "requested_groups": sorted(groups),
+            "units": _SHARPNESS_UNITS,
         },
         "full": {},
     }
@@ -336,7 +374,7 @@ def sharpness_stack_stats(
         "n_frames": T,
         "display_origin": display_origin,
         "requested_groups": sorted(groups),
-        "units": {},  
+        "units": _SHARPNESS_UNITS,  
         "parallel": {
             "enabled": bool(not serial_mode),
             "n_jobs": None if serial_mode else n_jobs,

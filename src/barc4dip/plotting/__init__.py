@@ -8,12 +8,12 @@ Unified public plotting API for barc4dip.
 from __future__ import annotations
 
 from .image import (
+    plt_histogram,
     plt_image,
     plt_tiles_metric,
-    plt_histogram,
 )
-
 from .stack import plt_displacement, plt_stack_metric
+from .style import show
 
 __all__ = [
     "plt_image",
@@ -21,4 +21,5 @@ __all__ = [
     "plt_histogram",
     "plt_displacement",
     "plt_stack_metric",
+    "show",
 ]

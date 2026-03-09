@@ -223,6 +223,7 @@ def plt_tiles_metric(
     cbar_label: str | None = None,
     show_std: bool = True,
     fmt: str = "{:.2f}",
+    normalize: bool = False,
     display_origin: Literal["upper", "lower"] | None = None,
 ) -> tuple[Figure, Axes, object]:
     """
@@ -248,11 +249,16 @@ def plt_tiles_metric(
     colorbar
         If True, add a colorbar (axes_grid1, size-matched to the image axes).
     cbar_label
-        Optional colorbar label.
+        Optional colorbar label. This applies to the image only and is not
+        modified by ``normalize``.
     show_std
         If True, display "mean ± std". If False, only "mean".
     fmt
         Format string for numbers, e.g. "{:.2f}" or "{:.3g}".
+    normalize
+        If True, normalize the displayed tile values by the central tile mean
+        (tile "C"). Both mean and std are divided by the same central value.
+        This only affects the text overlay, not the image or colorbar.
     display_origin
         If None, uses stats["meta"]["display_origin"] when available,
         otherwise defaults to "lower".
@@ -261,6 +267,14 @@ def plt_tiles_metric(
     -------
     fig, ax, im
         Matplotlib handles.
+
+    Raises
+    ------
+    ValueError
+        If inputs are invalid, or if normalization is requested but the
+        central tile mean is not finite or is zero.
+    KeyError
+        If the requested metric path is missing from ``stats["tiles"]``.
     """
     if not isinstance(img, np.ndarray) or img.ndim != 2:
         raise ValueError(
@@ -288,10 +302,13 @@ def plt_tiles_metric(
         if isinstance(group_units, dict):
             unit = group_units.get(metric)
 
-    if isinstance(unit, str) and unit.strip() != "":
-        metric_with_unit = f"{metric} ({unit})"
+    if normalize:
+        metric_with_unit = f"{metric} [norm.]"
     else:
-        metric_with_unit = metric
+        if isinstance(unit, str) and unit.strip() != "":
+            metric_with_unit = f"{metric} ({unit})"
+        else:
+            metric_with_unit = metric
 
     group_block = tiles.get(group)
     if not isinstance(group_block, dict):
@@ -312,6 +329,20 @@ def plt_tiles_metric(
             raise ValueError(
                 f"Expected std array with shape (3,3); got {type(std)} shape={getattr(std, 'shape', None)!r}"
             )
+
+    mean_disp = mean.astype(np.float64, copy=False)
+    std_disp = std.astype(np.float64, copy=False) if isinstance(std, np.ndarray) else None
+
+    if normalize:
+        center_value = float(mean_disp[1, 1])
+        if not np.isfinite(center_value):
+            raise ValueError("Cannot normalize tile labels: central tile mean is not finite")
+        if np.isclose(center_value, 0.0):
+            raise ValueError("Cannot normalize tile labels: central tile mean is zero")
+
+        mean_disp = mean_disp / center_value
+        if std_disp is not None:
+            std_disp = std_disp / center_value
 
     tile_labels = meta.get("tile_labels", None)
     if isinstance(tile_labels, np.ndarray) and tile_labels.shape == (3, 3):
@@ -379,9 +410,9 @@ def plt_tiles_metric(
             cx = 0.5 * (edges_x[ix] + edges_x[ix + 1])
             cy = 0.5 * (edges_y[iy] + edges_y[iy + 1])
 
-            m = float(mean[iy, ix])
+            m = float(mean_disp[iy, ix])
             if show_std:
-                s = float(std[iy, ix])
+                s = float(std_disp[iy, ix])
                 txt = f"{labels[iy, ix]}\n{fmt.format(m)} ± {fmt.format(s)}"
             else:
                 txt = f"{labels[iy, ix]}\n{fmt.format(m)}"

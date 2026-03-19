@@ -16,7 +16,7 @@ from .style import start_plotting
 _TemporalKey = Literal["abs", "inc"]
 _ViewKind = Literal["trajectory", "timeseries"]
 _Uncertainty = Literal["none", "band", "errorbar"]
-_StatsScope = Literal["full", "tiles"]
+_StatsScope = Literal["full", "tiles", "both"]
 
 
 def _get_temporal_block(stack_stats: dict, temporal: _TemporalKey) -> dict:
@@ -288,6 +288,8 @@ def plt_stack_metric(
         stack_stats["tiles"][group][metric]["mean"] -> (T, 3, 3)
         stack_stats["tiles"][group][metric]["std"]  -> (T, 3, 3)
       using distinct colors and markers, and per-frame std.
+    - scope="both": same as "tiles", plus a 10th curve from the full image
+      plotted in black with a filled-circle marker and no uncertainty.
     """
     start_plotting(k)
 
@@ -315,25 +317,27 @@ def plt_stack_metric(
         metric_with_unit = metric
         ylabel = metric
 
-    nrows = 1
     fig_h = 3.0
     fig_w = 9.0
-
-    fig, ax = plt.subplots(nrows=nrows, ncols=1, sharex=True, figsize=(fig_w, fig_h))
+    fig, ax = plt.subplots(nrows=1, ncols=1, sharex=True, figsize=(fig_w, fig_h))
 
     if title is None:
         if scope == "full":
             tlt = "from full image"
-        else:
+        elif scope == "tiles":
             tlt = "from tiled image"
-
+        elif scope == "both":
+            tlt = "from tiled + full image"
+        else:
+            raise ValueError(f"unknown scope={scope!r}")
         title = f"{metric} {tlt}"
+
     ax.set_title(title, fontsize=15 * k)
     ax.set_xlabel("(frame)")
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.3)
 
-    if scope == "full":
+    def _get_full_series() -> tuple[np.ndarray, np.ndarray]:
         full = stack_stats.get("full")
         if not isinstance(full, dict):
             raise ValueError("stack_stats must contain dict key 'full'")
@@ -346,12 +350,51 @@ def plt_stack_metric(
         if not isinstance(y, np.ndarray):
             raise ValueError(f"Expected full[{group!r}][{metric!r}] as numpy array; got {type(y)}")
         if y.ndim != 1:
-            raise ValueError(f"Expected 1D time series for full[{group!r}][{metric!r}]; got shape={y.shape!r}")
+            raise ValueError(
+                f"Expected 1D time series for full[{group!r}][{metric!r}]; got shape={y.shape!r}"
+            )
 
         t = np.arange(y.size, dtype=float)
         m = np.isfinite(y)
-        yp = y[m]
-        tp = t[m]
+        return t[m], y[m]
+
+    def _get_tiles_series() -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray]:
+        tiles = stack_stats.get("tiles")
+        if not isinstance(tiles, dict):
+            raise ValueError("stack_stats must contain dict key 'tiles' for scope='tiles'/'both'")
+
+        group_block = tiles.get(group)
+        if not isinstance(group_block, dict):
+            raise KeyError(f"tiles has no group {group!r}")
+
+        metric_block = group_block.get(metric)
+        if not isinstance(metric_block, dict):
+            raise KeyError(f"tiles[{group!r}] has no metric {metric!r}")
+
+        mean = metric_block.get("mean")
+        std = metric_block.get("std")
+
+        if not isinstance(mean, np.ndarray) or mean.ndim != 3 or mean.shape[1:] != (3, 3):
+            raise ValueError(
+                f"Expected tiles[{group!r}][{metric!r}]['mean'] with shape (T,3,3); "
+                f"got {type(mean)} shape={getattr(mean, 'shape', None)!r}"
+            )
+
+        if uncertainty != "none":
+            if not isinstance(std, np.ndarray) or std.ndim != 3 or std.shape != mean.shape:
+                raise ValueError(
+                    f"Expected tiles[{group!r}][{metric!r}]['std'] with shape {mean.shape!r}; "
+                    f"got {type(std)} shape={getattr(std, 'shape', None)!r}"
+                )
+        else:
+            std = None
+
+        t_all = np.arange(mean.shape[0], dtype=float)
+        labels = _default_tile_labels(meta)
+        return t_all, mean, std, labels
+
+    if scope == "full":
+        tp, yp = _get_full_series()
 
         ystd: float | None
         if uncertainty == "none":
@@ -370,45 +413,19 @@ def plt_stack_metric(
             marker="o",
             markersize=3.0,
         )
-        xmin, xmax = ax.get_xlim()
-        tmax = tp[-1]
-        ax.set_xlim(xmin, 1.18 * tmax)
+
+        if tp.size > 1:
+            xmin, xmax = ax.get_xlim()
+            tmax = tp[-1]
+            ax.set_xlim(xmin, 1.18 * tmax)
+
         return fig, ax, None
 
-    if scope != "tiles":
+    if scope not in ("tiles", "both"):
         raise ValueError(f"unknown scope={scope!r}")
 
-    tiles = stack_stats.get("tiles")
-    if not isinstance(tiles, dict):
-        raise ValueError("stack_stats must contain dict key 'tiles' for scope='tiles'")
-
-    group_block = tiles.get(group)
-    if not isinstance(group_block, dict):
-        raise KeyError(f"tiles has no group {group!r}")
-
-    metric_block = group_block.get(metric)
-    if not isinstance(metric_block, dict):
-        raise KeyError(f"tiles[{group!r}] has no metric {metric!r}")
-
-    mean = metric_block.get("mean")
-    std = metric_block.get("std")
-
-    if not isinstance(mean, np.ndarray) or mean.ndim != 3 or mean.shape[1:] != (3, 3):
-        raise ValueError(
-            f"Expected tiles[{group!r}][{metric!r}]['mean'] with shape (T,3,3); "
-            f"got {type(mean)} shape={getattr(mean, 'shape', None)!r}"
-        )
-    if uncertainty != "none":
-        if not isinstance(std, np.ndarray) or std.ndim != 3 or std.shape != mean.shape:
-            raise ValueError(
-                f"Expected tiles[{group!r}][{metric!r}]['std'] with shape {mean.shape!r}; "
-                f"got {type(std)} shape={getattr(std, 'shape', None)!r}"
-            )
-
-    labels = _default_tile_labels(meta)
-
+    t_all, mean, std, labels = _get_tiles_series()
     T = int(mean.shape[0])
-    t_all = np.arange(T, dtype=float)
 
     if markers is None:
         markers = ("o", "s", "^", "v", "D", "P", "X", "<", ">")
@@ -423,7 +440,7 @@ def plt_stack_metric(
         for ix in range(3):
             y = mean[:, iy, ix].astype(float, copy=False)
             ystd_arr = None
-            if uncertainty != "none":
+            if std is not None:
                 ystd_arr = std[:, iy, ix].astype(float, copy=False)
 
             m = np.isfinite(y)
@@ -433,6 +450,7 @@ def plt_stack_metric(
             if not np.any(m):
                 idx += 1
                 continue
+
             _plot_timeseries(
                 ax,
                 t_all[m],
@@ -446,9 +464,42 @@ def plt_stack_metric(
                 markersize=3.0,
             )
             idx += 1
+
+    if scope == "both":
+        tp, yp = _get_full_series()
+
+        _plot_timeseries(
+            ax,
+            tp,
+            yp,
+            color="black",
+            ylabel=ylabel,
+            label="full",
+            uncertainty="none",
+            ystd=None,
+            marker="x",
+            markersize=4.0,
+        )
+
+        # ax.plot(
+        #     tp,
+        #     yp,
+        #     linewidth=1.0,
+        #     linestyle="-",
+        #     color="black",
+        #     marker="o",
+        #     markersize=3.0,
+        #     markerfacecolor="white",
+        #     markeredgecolor="black",
+        #     markeredgewidth=1.1,
+        #     label="full",
+        #     zorder=5,
+        # )
+
     if T > 1:
         xmin, xmax = ax.get_xlim()
         tmax = t_all[-1]
         ax.set_xlim(xmin, 1.18 * tmax)
+
     ax.legend(loc="center right", fontsize=9 * k, framealpha=0.85)
     return fig, ax, None

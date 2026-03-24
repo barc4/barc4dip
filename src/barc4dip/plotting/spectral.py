@@ -175,9 +175,7 @@ def plt_spectrum1d(
         if ymax is not None:
             ax.set_ylim(top=ymax)
     else:
-        if ymin is None:
-            ax.set_ylim(bottom=0.0)
-        else:
+        if ymin is not None:
             ax.set_ylim(bottom=ymin)
         if ymax is not None:
             ax.set_ylim(top=ymax)

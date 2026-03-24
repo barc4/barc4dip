@@ -541,17 +541,6 @@ def grain(
         normalize="peak",
     )
 
-    ac = np.asarray(ac)
-    if np.iscomplexobj(ac):
-        imag_max = float(np.max(np.abs(ac.imag)))
-        real_max = float(np.max(np.abs(ac.real)))
-        if imag_max > 1e-10 * max(real_max, 1.0):
-            raise ValueError(
-                f"autocorr2d returned significant imaginary part "
-                f"(max|Im|={imag_max:.3e}, max|Re|={real_max:.3e})."
-            )
-        ac = ac.real
-
     iy, ix = np.unravel_index(int(np.argmax(ac)), ac.shape)
 
     y_cut = ac[:, ix]

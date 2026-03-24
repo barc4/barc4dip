@@ -532,14 +532,14 @@ def plt_histogram(
     if np.issubdtype(values.dtype, np.floating):
         values = np.clip(values, float(bin_min), float(bin_max))
 
-    fig, ax = plt.subplots(figsize=(6.0, 3.5))
+    fig, ax = plt.subplots(figsize=(7.0, 4.5))
 
     counts, bin_edges, _ = ax.hist(
         values,
         bins=int(bin_max - bin_min),
         range=(bin_min, bin_max),
         histtype="step",
-        linewidth=1.,
+        linewidth=1.5,
         color="steelblue",
         alpha=1,
         density=density,
@@ -581,6 +581,11 @@ def plt_histogram(
 
     ax2: Axes | None = None
     if cumulative:
+        if logy:
+            ax.grid(True, which="both",linestyle=":", linewidth=0.5)
+        else:
+            ax.grid(True, which="both", axis='x', linestyle=":", linewidth=0.5)
+
         ax2 = ax.twinx()
 
         cdf = np.cumsum(counts)
@@ -597,5 +602,7 @@ def plt_histogram(
         )
         ax2.set_ylabel("cumulative")
         ax2.set_ylim(-0.05, 1.05)
+    else:
+        ax.grid(True, which="both", linestyle=":", linewidth=0.5)
 
     return fig, ax, ax2

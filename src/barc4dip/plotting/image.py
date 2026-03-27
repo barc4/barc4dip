@@ -35,7 +35,7 @@ def plt_image(
     roi_color: str = "orange",
     roi_lw: float = 1.75,
     roi_alpha: float = 0.95,
-) -> tuple[Figure, Axes, object]:
+) -> Figure:
     """
     Plot an image in pixel coordinates with an optional size-matched colorbar,
     and optionally overlay a rectangular ROI defined by Python slices.
@@ -47,7 +47,8 @@ def plt_image(
     title : str | None
         Optional figure title.
     k : float
-        Scaling factor for fonts and titles (passed to start_plotting). Default is 1.0.
+        Scaling factor for fonts and titles (passed to ``start_plotting``).
+        Default is 1.0.
     vmin, vmax : float | None
         Minimum/maximum value for color scaling.
     cmap : str
@@ -68,7 +69,7 @@ def plt_image(
         Steps must be 1 (or None).
     roi_zoom : bool
         If True, set axis limits to the ROI bounds (with the correct direction
-        for the chosen display_origin).
+        for the chosen ``display_origin``).
     roi_color, roi_lw, roi_alpha
         Style for ROI rectangle overlay.
 
@@ -76,10 +77,6 @@ def plt_image(
     -------
     fig : matplotlib.figure.Figure
         Figure handle.
-    ax : matplotlib.axes.Axes
-        Axes handle.
-    im : matplotlib.image.AxesImage
-        The image artist returned by ``imshow``.
     """
     if img.ndim != 2:
         raise ValueError(f"image expects a 2D array; got shape={img.shape!r}")
@@ -118,19 +115,9 @@ def plt_image(
     if title:
         ax.set_title(title, fontsize=15 * k)
 
+
     if roi is not None:
         x0, y0, w, h, ysl, xsl = _roi_to_rect(roi, ny=ny, nx=nx)
-
-        rect = Rectangle(
-            (x0, y0),
-            w,
-            h,
-            fill=False,
-            edgecolor=roi_color,
-            linewidth=roi_lw,
-            alpha=roi_alpha,
-        )
-        ax.add_patch(rect)
 
         if roi_zoom:
             ax.set_xlim(left=float(xsl.start), right=float(xsl.stop))
@@ -138,6 +125,24 @@ def plt_image(
                 ax.set_ylim(bottom=float(ysl.start), top=float(ysl.stop))
             else:
                 ax.set_ylim(bottom=float(ysl.stop), top=float(ysl.start))
+        else:
+            rect = Rectangle(
+                (x0, y0),
+                w,
+                h,
+                fill=False,
+                edgecolor=roi_color,
+                linewidth=roi_lw,
+                alpha=roi_alpha,
+            )
+            ax.add_patch(rect)
+
+        # if roi_zoom:
+        #     ax.set_xlim(left=float(xsl.start), right=float(xsl.stop))
+        #     if display_origin == "lower":
+        #         ax.set_ylim(bottom=float(ysl.start), top=float(ysl.stop))
+        #     else:
+        #         ax.set_ylim(bottom=float(ysl.stop), top=float(ysl.start))
 
     if xmin is not None or xmax is not None:
         ax.set_xlim(left=xmin, right=xmax)
@@ -151,7 +156,7 @@ def plt_image(
         if cbar_label is not None:
             cbar.set_label(cbar_label)
 
-    return fig, ax, im
+    return fig
 
 def _as_unit_step_slice(s: slice, *, n: int, name: str) -> slice:
     if not isinstance(s, slice):
@@ -225,7 +230,7 @@ def plt_tiles_metric(
     fmt: str = "{:.2f}",
     normalize: bool = False,
     display_origin: Literal["upper", "lower"] | None = None,
-) -> tuple[Figure, Axes, object]:
+) -> Figure:
     """
     Plot an image and overlay a 3x3 tile grid with metric mean ± std.
 
@@ -265,8 +270,8 @@ def plt_tiles_metric(
 
     Returns
     -------
-    fig, ax, im
-        Matplotlib handles.
+    fig : matplotlib.figure.Figure
+        Figure handle.
 
     Raises
     ------
@@ -442,7 +447,7 @@ def plt_tiles_metric(
         if cbar_label is not None:
             cbar.set_label(cbar_label)
 
-    return fig, ax, im
+    return fig
 
 
 def plt_histogram(
@@ -458,7 +463,7 @@ def plt_histogram(
     cumulative: bool = False,
     density: bool = False,
     percentiles: tuple[float, ...] | None = None,
-) -> tuple[Figure, Axes, Axes | None]:
+) -> Figure:
     """
     Plot a histogram of pixel values from a 2D image.
 
@@ -499,10 +504,6 @@ def plt_histogram(
     -------
     fig : matplotlib.figure.Figure
         Figure handle.
-    ax : matplotlib.axes.Axes
-        Main histogram axes.
-    ax2 : matplotlib.axes.Axes | None
-        Secondary axes for cumulative curve if enabled, otherwise None.
 
     Raises
     ------
@@ -605,4 +606,4 @@ def plt_histogram(
     else:
         ax.grid(True, which="both", linestyle=":", linewidth=0.5)
 
-    return fig, ax, ax2
+    return fig

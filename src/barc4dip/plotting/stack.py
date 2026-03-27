@@ -108,7 +108,7 @@ def plt_displacement(
     uncertainty: _Uncertainty = "none",
     k: float = 1.0,
     title: str | None = None,
-) -> tuple[Figure, Axes | np.ndarray, object | None]:
+) -> Figure:
     """
     Plot speckle displacement diagnostics from ``speckle_stack_stats`` output.
 
@@ -138,10 +138,7 @@ def plt_displacement(
     Returns
     -------
     fig : Figure
-    ax_or_axes : Axes | np.ndarray
-        Single Axes (trajectory) or array of Axes (time-series).
-    artist : object | None
-        Scatter artist for trajectory mode (for colorbar), else None.
+        Matplotlib figure handle.
     """
     start_plotting(k)
 
@@ -236,7 +233,7 @@ def plt_displacement(
         cbar.set_label("(frame)")
 
         ax.grid(True, alpha=0.3)
-        return fig, ax, sc
+        return fig
 
     if kind != "timeseries":
         raise ValueError(f"unknown kind={kind!r}")
@@ -263,7 +260,7 @@ def plt_displacement(
         fig.suptitle(title, fontsize=15 * k)
 
     fig.tight_layout()
-    return fig, axes, None
+    return fig
 
 
 def plt_stack_metric(
@@ -277,7 +274,7 @@ def plt_stack_metric(
     markers: Sequence[str] | None = None,
     k: float = 1.0,
     title: str | None = None,
-) -> tuple[Figure, Axes, None]:
+) -> Figure:
     """
     Plot a single metric as a time series from ``XXX_stack_stats`` output.
 
@@ -290,6 +287,11 @@ def plt_stack_metric(
       using distinct colors and markers, and per-frame std.
     - scope="both": same as "tiles", plus a 10th curve from the full image
       plotted in black with a filled-circle marker and no uncertainty.
+
+    Returns
+    -------
+    fig : Figure
+        Matplotlib figure handle.
     """
     start_plotting(k)
 
@@ -419,7 +421,7 @@ def plt_stack_metric(
             tmax = tp[-1]
             ax.set_xlim(xmin, 1.18 * tmax)
 
-        return fig, ax, None
+        return fig
 
     if scope not in ("tiles", "both"):
         raise ValueError(f"unknown scope={scope!r}")
@@ -502,4 +504,4 @@ def plt_stack_metric(
         ax.set_xlim(xmin, 1.18 * tmax)
 
     ax.legend(loc="center right", fontsize=9 * k, framealpha=0.85)
-    return fig, ax, None
+    return fig

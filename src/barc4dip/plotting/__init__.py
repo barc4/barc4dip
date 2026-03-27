@@ -14,7 +14,7 @@ from .image import (
 )
 from .spectral import plt_spectrum1d, plt_spectrum2d
 from .stack import plt_displacement, plt_stack_metric
-from .style import show
+from .style import close, savefig, show
 
 __all__ = [
     "plt_histogram",
@@ -24,5 +24,7 @@ __all__ = [
     "plt_spectrum2d",
     "plt_displacement",
     "plt_stack_metric",
+    "close",
+    "savefig",
     "show",
 ]

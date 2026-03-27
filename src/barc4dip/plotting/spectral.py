@@ -33,7 +33,7 @@ def plt_spectrum1d(
     cumulative: bool = False,
     percentiles: tuple[float, ...] | None = None,
     mask_center: bool = False,
-) -> tuple[Figure, Axes, Axes | None]:
+) -> Figure:
     """
     Plot a 1D spectral curve.
 
@@ -75,12 +75,8 @@ def plt_spectrum1d(
 
     Returns
     -------
-    fig : matplotlib.figure.Figure
-        Figure handle.
-    ax : matplotlib.axes.Axes
-        Main axes.
-    ax2 : matplotlib.axes.Axes | None
-        Secondary axes for cumulative curve if enabled, otherwise None.
+    fig : Figure
+        Matplotlib figure handle.
 
     Raises
     ------
@@ -227,7 +223,7 @@ def plt_spectrum1d(
     else:
         ax.grid(True, which="both", linestyle=":", linewidth=0.5)
 
-    return fig, ax, ax2
+    return fig
 
 
 def plt_spectrum2d(
@@ -251,7 +247,7 @@ def plt_spectrum2d(
     ylabel: str = "y",
     title: str | None = None,
     display_origin: str = "lower",
-) -> dict[str, dict[str, object] | None]:
+) -> dict[str, Figure | None]:
     """
     Plot a 2D spectral map and optionally its central cuts.
 
@@ -299,8 +295,8 @@ def plt_spectrum2d(
 
     Returns
     -------
-    dict[str, dict[str, object] | None]
-        Dictionary with figure and axes handles:
+    dict[str, Figure | None]
+        Dictionary of figure handles:
         ``{"intensity", "intensity_cuts", "phase", "phase_cuts"}``.
 
     Raises
@@ -324,7 +320,7 @@ def plt_spectrum2d(
     ix0 = nx // 2
     iy0 = ny // 2
 
-    out: dict[str, dict[str, object] | None] = {
+    out: dict[str, Figure | None] = {
         "intensity": None,
         "intensity_cuts": None,
         "phase": None,
@@ -366,12 +362,7 @@ def plt_spectrum2d(
         ymax=ymax,
         display_origin=display_origin,
     )
-    out["intensity"] = {
-        "fig": fig_int,
-        "ax": ax_int,
-        "image": im_int,
-        "colorbar": cbar_int,
-    }
+    out["intensity"] = fig_int
 
     if cuts:
         intensity_h = intensity_plot[iy0, :]
@@ -401,11 +392,7 @@ def plt_spectrum2d(
             xmax=ymax,
         )
         fig_cuts.tight_layout()
-        out["intensity_cuts"] = {
-            "fig": fig_cuts,
-            "axes": (ax1, ax2),
-            "lines": (line_h, line_v),
-        }
+        out["intensity_cuts"] = fig_cuts
 
     if not (is_complex and show_phase):
         return out
@@ -434,12 +421,7 @@ def plt_spectrum2d(
         ymax=ymax,
         display_origin=display_origin,
     )
-    out["phase"] = {
-        "fig": fig_phase,
-        "ax": ax_phase,
-        "image": im_phase,
-        "colorbar": cbar_phase,
-    }
+    out["phase"] = fig_phase
 
     if cuts:
         phase_h = phase_map[iy0, :]
@@ -469,11 +451,7 @@ def plt_spectrum2d(
             xmax=ymax,
         )
         fig_pc.tight_layout()
-        out["phase_cuts"] = {
-            "fig": fig_pc,
-            "axes": (ax1, ax2),
-            "lines": (line_h, line_v),
-        }
+        out["phase_cuts"] = fig_pc
 
     return out
 

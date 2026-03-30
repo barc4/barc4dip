@@ -99,8 +99,10 @@ def _plot_timeseries(
 
 
 def plt_displacement(
-    stack_stats: dict,
+    stack_stats: dict | None = None,
     *,
+    xarr: np.ndarray | None = None,
+    yarr: np.ndarray | None = None,
     temporal: _TemporalKey = "abs",
     kind: _ViewKind = "trajectory",
     cmap: str = "viridis",
@@ -110,26 +112,36 @@ def plt_displacement(
     title: str | None = None,
 ) -> Figure:
     """
-    Plot speckle displacement diagnostics from ``speckle_stack_stats`` output.
+    Plot displacement diagnostics either from ``speckle_stack_stats`` output
+    or directly from x/y displacement arrays.
 
     Parameters
     ----------
-    stack_stats : dict
-        Output dictionary from ``speckle_stack_stats``. Must contain:
-        ``stack_stats["temporal"][temporal]["dx"]``, ``["dy"]``, optionally ``["r"]``
-        and corresponding uncertainties ``std_dx``, ``std_dy``, ``std_r``.
+    stack_stats : dict | None, optional
+        Output dictionary from ``speckle_stack_stats``. Must contain
+        ``stack_stats["temporal"][temporal]["dx"]``, ``["dy"]``, optionally
+        ``["r"]`` and corresponding uncertainties ``std_dx``, ``std_dy``,
+        ``std_r``.
+    xarr : np.ndarray | None, optional
+        1D x-displacement array. Must be provided together with ``yarr`` when
+        plotting directly from arrays instead of ``stack_stats``.
+    yarr : np.ndarray | None, optional
+        1D y-displacement array. Must be provided together with ``xarr`` when
+        plotting directly from arrays instead of ``stack_stats``.
     temporal : {"abs","inc"}
-        Choose displacement convention from ``stack_stats["temporal"]``.
+        Displacement convention from ``stack_stats["temporal"]``.
+        When using ``xarr`` and ``yarr`` directly, only ``"abs"`` is allowed.
     kind : {"trajectory","timeseries"}
         - "trajectory": XY path (dx vs dy) with time-colored points.
         - "timeseries": dx(t), dy(t), and optionally r(t) stacked subplots.
     cmap : str
         Matplotlib colormap name for time-colored points (trajectory mode).
     show_path : bool
-        If True, draw a connected path behind the time-colored points (trajectory mode).
+        If True, draw a connected path behind the time-colored points
+        (trajectory mode).
     uncertainty : {"none","band","errorbar"}
         Uncertainty rendering for time series when std arrays are available.
-        Default is "band" (±1σ fill).
+        When using ``xarr`` and ``yarr`` directly, only ``"none"`` is allowed.
     k : float
         Plot styling scale (passed to ``start_plotting``).
     title : str | None
@@ -139,40 +151,71 @@ def plt_displacement(
     -------
     fig : Figure
         Matplotlib figure handle.
+
+    Raises
+    ------
+    ValueError
+        If the provided inputs are inconsistent.
     """
     start_plotting(k)
 
-    meta = stack_stats.get("meta")
-    if not isinstance(meta, dict):
-        raise ValueError("stack_stats must contain dict key 'meta'")
+    use_stack = stack_stats is not None
+    use_xy = xarr is not None or yarr is not None
 
-    units = meta.get("units", {})
+    if use_stack and use_xy:
+        raise ValueError("Provide either 'stack_stats' or both 'xarr' and 'yarr', not both.")
+
+    if not use_stack and not use_xy:
+        raise ValueError("Provide either 'stack_stats' or both 'xarr' and 'yarr'.")
+
     unit_px = "px"
-    if isinstance(units, dict):
-        temporal_units = units.get("temporal")
-        if isinstance(temporal_units, dict):
-            u_dx = temporal_units.get("dx")
-            if isinstance(u_dx, str) and u_dx.strip() != "":
-                unit_px = u_dx
-
-    block = _get_temporal_block(stack_stats, temporal=temporal)
-
-    dx = _get_series(block, "dx").astype(float, copy=False)
-    dy = _get_series(block, "dy").astype(float, copy=False)
-
-    include_r = True
     r = None
     std_dx = std_dy = std_r = None
+    include_r = True
 
-    if isinstance(block.get("r"), np.ndarray):
-        r = _get_series(block, "r").astype(float, copy=False)
+    if use_stack:
+        meta = stack_stats.get("meta")
+        if not isinstance(meta, dict):
+            raise ValueError("stack_stats must contain dict key 'meta'")
 
-    if isinstance(block.get("std_dx"), np.ndarray) or isinstance(block.get("dx_std"), np.ndarray):
-        std_dx = _get_series(block, "std_dx").astype(float, copy=False)
-    if isinstance(block.get("std_dy"), np.ndarray) or isinstance(block.get("dy_std"), np.ndarray):
-        std_dy = _get_series(block, "std_dy").astype(float, copy=False)
-    if isinstance(block.get("std_r"), np.ndarray) or isinstance(block.get("r_std"), np.ndarray):
-        std_r = _get_series(block, "std_r").astype(float, copy=False)
+        units = meta.get("units", {})
+        if isinstance(units, dict):
+            temporal_units = units.get("temporal")
+            if isinstance(temporal_units, dict):
+                u_dx = temporal_units.get("dx")
+                if isinstance(u_dx, str) and u_dx.strip() != "":
+                    unit_px = u_dx
+
+        block = _get_temporal_block(stack_stats, temporal=temporal)
+
+        dx = _get_series(block, "dx").astype(float, copy=False)
+        dy = _get_series(block, "dy").astype(float, copy=False)
+
+        if isinstance(block.get("r"), np.ndarray):
+            r = _get_series(block, "r").astype(float, copy=False)
+
+        if isinstance(block.get("std_dx"), np.ndarray) or isinstance(block.get("dx_std"), np.ndarray):
+            std_dx = _get_series(block, "std_dx").astype(float, copy=False)
+        if isinstance(block.get("std_dy"), np.ndarray) or isinstance(block.get("dy_std"), np.ndarray):
+            std_dy = _get_series(block, "std_dy").astype(float, copy=False)
+        if isinstance(block.get("std_r"), np.ndarray) or isinstance(block.get("r_std"), np.ndarray):
+            std_r = _get_series(block, "std_r").astype(float, copy=False)
+
+    else:
+        if xarr is None or yarr is None:
+            raise ValueError("Both 'xarr' and 'yarr' must be provided together.")
+
+        if temporal != "abs":
+            raise ValueError("When using 'xarr' and 'yarr', temporal must be 'abs'.")
+
+        if uncertainty != "none":
+            raise ValueError("When using 'xarr' and 'yarr', uncertainty must be 'none'.")
+
+        dx = np.asarray(xarr, dtype=float).ravel()
+        dy = np.asarray(yarr, dtype=float).ravel()
+
+        include_r = True
+        r = np.sqrt(dx**2 + dy**2)
 
     n = dx.size
     if dy.size != n:
@@ -187,18 +230,18 @@ def plt_displacement(
         raise ValueError(f"std_r must match dx length; got {std_r.size} vs {n}")
 
     m = np.ones(n, dtype=bool)
-    drop_nan = True
-    if drop_nan:
-        m &= np.isfinite(dx) & np.isfinite(dy)
-        if kind == "timeseries" and include_r and r is not None:
-            m &= np.isfinite(r)
-        if kind == "timeseries" and uncertainty != "none":
-            if std_dx is not None:
-                m &= np.isfinite(std_dx)
-            if std_dy is not None:
-                m &= np.isfinite(std_dy)
-            if include_r and r is not None and std_r is not None:
-                m &= np.isfinite(std_r)
+    m &= np.isfinite(dx) & np.isfinite(dy)
+
+    if kind == "timeseries" and include_r and r is not None:
+        m &= np.isfinite(r)
+
+    if kind == "timeseries" and uncertainty != "none":
+        if std_dx is not None:
+            m &= np.isfinite(std_dx)
+        if std_dy is not None:
+            m &= np.isfinite(std_dy)
+        if include_r and r is not None and std_r is not None:
+            m &= np.isfinite(std_r)
 
     dxp = dx[m]
     dyp = dy[m]
@@ -217,7 +260,16 @@ def plt_displacement(
         if show_path:
             ax.plot(dxp, dyp, linewidth=1.0, color="black")
 
-        sc = ax.scatter(dxp, dyp, c=t, cmap=cmap, s=25, zorder=3, edgecolors="black", linewidths=0.5)
+        sc = ax.scatter(
+            dxp,
+            dyp,
+            c=t,
+            cmap=cmap,
+            s=35,
+            zorder=3,
+            edgecolors="black",
+            linewidths=0.5,
+        )
 
         ax.set_xlabel(f"dx ({unit_px})")
         ax.set_ylabel(f"dy ({unit_px})")
@@ -229,8 +281,7 @@ def plt_displacement(
 
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="4%", pad=0.08)
-        cbar = fig.colorbar(sc, cax=cax)
-        cbar.set_label("(frame)")
+        fig.colorbar(sc, cax=cax)
 
         ax.grid(True, alpha=0.3)
         return fig
@@ -248,9 +299,33 @@ def plt_displacement(
 
     colors = ["darkred", "olive", "steelblue"]
 
-    _plot_timeseries(axes[0], t, dxp, color=colors[0], ylabel=f"dx ({unit_px})", uncertainty=uncertainty, ystd=sdxp)
-    _plot_timeseries(axes[1], t, dyp, color=colors[1], ylabel=f"dy ({unit_px})", uncertainty=uncertainty, ystd=sdyp)
-    _plot_timeseries(axes[2], t, rp,  color=colors[2], ylabel=f"r ({unit_px})",  uncertainty=uncertainty, ystd=sdrp)
+    _plot_timeseries(
+        axes[0],
+        t,
+        dxp,
+        color=colors[0],
+        ylabel=f"dx ({unit_px})",
+        uncertainty=uncertainty,
+        ystd=sdxp,
+    )
+    _plot_timeseries(
+        axes[1],
+        t,
+        dyp,
+        color=colors[1],
+        ylabel=f"dy ({unit_px})",
+        uncertainty=uncertainty,
+        ystd=sdyp,
+    )
+    _plot_timeseries(
+        axes[2],
+        t,
+        rp,
+        color=colors[2],
+        ylabel=f"r ({unit_px})",
+        uncertainty=uncertainty,
+        ystd=sdrp,
+    )
 
     axes[-1].set_xlabel("(frame)")
 
@@ -261,7 +336,6 @@ def plt_displacement(
 
     fig.tight_layout()
     return fig
-
 
 def plt_stack_metric(
     stack_stats: dict,

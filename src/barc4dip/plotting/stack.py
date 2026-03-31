@@ -16,7 +16,7 @@ from .style import start_plotting
 _TemporalKey = Literal["abs", "inc"]
 _ViewKind = Literal["trajectory", "timeseries"]
 _Uncertainty = Literal["none", "band", "errorbar"]
-_StatsScope = Literal["full", "tiles"]
+_StatsScope = Literal["full", "tiles", "both"]
 
 
 def _get_temporal_block(stack_stats: dict, temporal: _TemporalKey) -> dict:
@@ -99,8 +99,10 @@ def _plot_timeseries(
 
 
 def plt_displacement(
-    stack_stats: dict,
+    stack_stats: dict | None = None,
     *,
+    xarr: np.ndarray | None = None,
+    yarr: np.ndarray | None = None,
     temporal: _TemporalKey = "abs",
     kind: _ViewKind = "trajectory",
     cmap: str = "viridis",
@@ -108,28 +110,38 @@ def plt_displacement(
     uncertainty: _Uncertainty = "none",
     k: float = 1.0,
     title: str | None = None,
-) -> tuple[Figure, Axes | np.ndarray, object | None]:
+) -> Figure:
     """
-    Plot speckle displacement diagnostics from ``speckle_stack_stats`` output.
+    Plot displacement diagnostics either from ``speckle_stack_stats`` output
+    or directly from x/y displacement arrays.
 
     Parameters
     ----------
-    stack_stats : dict
-        Output dictionary from ``speckle_stack_stats``. Must contain:
-        ``stack_stats["temporal"][temporal]["dx"]``, ``["dy"]``, optionally ``["r"]``
-        and corresponding uncertainties ``std_dx``, ``std_dy``, ``std_r``.
+    stack_stats : dict | None, optional
+        Output dictionary from ``speckle_stack_stats``. Must contain
+        ``stack_stats["temporal"][temporal]["dx"]``, ``["dy"]``, optionally
+        ``["r"]`` and corresponding uncertainties ``std_dx``, ``std_dy``,
+        ``std_r``.
+    xarr : np.ndarray | None, optional
+        1D x-displacement array. Must be provided together with ``yarr`` when
+        plotting directly from arrays instead of ``stack_stats``.
+    yarr : np.ndarray | None, optional
+        1D y-displacement array. Must be provided together with ``xarr`` when
+        plotting directly from arrays instead of ``stack_stats``.
     temporal : {"abs","inc"}
-        Choose displacement convention from ``stack_stats["temporal"]``.
+        Displacement convention from ``stack_stats["temporal"]``.
+        When using ``xarr`` and ``yarr`` directly, only ``"abs"`` is allowed.
     kind : {"trajectory","timeseries"}
         - "trajectory": XY path (dx vs dy) with time-colored points.
         - "timeseries": dx(t), dy(t), and optionally r(t) stacked subplots.
     cmap : str
         Matplotlib colormap name for time-colored points (trajectory mode).
     show_path : bool
-        If True, draw a connected path behind the time-colored points (trajectory mode).
+        If True, draw a connected path behind the time-colored points
+        (trajectory mode).
     uncertainty : {"none","band","errorbar"}
         Uncertainty rendering for time series when std arrays are available.
-        Default is "band" (±1σ fill).
+        When using ``xarr`` and ``yarr`` directly, only ``"none"`` is allowed.
     k : float
         Plot styling scale (passed to ``start_plotting``).
     title : str | None
@@ -138,44 +150,72 @@ def plt_displacement(
     Returns
     -------
     fig : Figure
-    ax_or_axes : Axes | np.ndarray
-        Single Axes (trajectory) or array of Axes (time-series).
-    artist : object | None
-        Scatter artist for trajectory mode (for colorbar), else None.
+        Matplotlib figure handle.
+
+    Raises
+    ------
+    ValueError
+        If the provided inputs are inconsistent.
     """
     start_plotting(k)
 
-    meta = stack_stats.get("meta")
-    if not isinstance(meta, dict):
-        raise ValueError("stack_stats must contain dict key 'meta'")
+    use_stack = stack_stats is not None
+    use_xy = xarr is not None or yarr is not None
 
-    units = meta.get("units", {})
+    if use_stack and use_xy:
+        raise ValueError("Provide either 'stack_stats' or both 'xarr' and 'yarr', not both.")
+
+    if not use_stack and not use_xy:
+        raise ValueError("Provide either 'stack_stats' or both 'xarr' and 'yarr'.")
+
     unit_px = "px"
-    if isinstance(units, dict):
-        temporal_units = units.get("temporal")
-        if isinstance(temporal_units, dict):
-            u_dx = temporal_units.get("dx")
-            if isinstance(u_dx, str) and u_dx.strip() != "":
-                unit_px = u_dx
-
-    block = _get_temporal_block(stack_stats, temporal=temporal)
-
-    dx = _get_series(block, "dx").astype(float, copy=False)
-    dy = _get_series(block, "dy").astype(float, copy=False)
-
-    include_r = True
     r = None
     std_dx = std_dy = std_r = None
+    include_r = True
 
-    if isinstance(block.get("r"), np.ndarray):
-        r = _get_series(block, "r").astype(float, copy=False)
+    if use_stack:
+        meta = stack_stats.get("meta")
+        if not isinstance(meta, dict):
+            raise ValueError("stack_stats must contain dict key 'meta'")
 
-    if isinstance(block.get("std_dx"), np.ndarray) or isinstance(block.get("dx_std"), np.ndarray):
-        std_dx = _get_series(block, "std_dx").astype(float, copy=False)
-    if isinstance(block.get("std_dy"), np.ndarray) or isinstance(block.get("dy_std"), np.ndarray):
-        std_dy = _get_series(block, "std_dy").astype(float, copy=False)
-    if isinstance(block.get("std_r"), np.ndarray) or isinstance(block.get("r_std"), np.ndarray):
-        std_r = _get_series(block, "std_r").astype(float, copy=False)
+        units = meta.get("units", {})
+        if isinstance(units, dict):
+            temporal_units = units.get("temporal")
+            if isinstance(temporal_units, dict):
+                u_dx = temporal_units.get("dx")
+                if isinstance(u_dx, str) and u_dx.strip() != "":
+                    unit_px = u_dx
+
+        block = _get_temporal_block(stack_stats, temporal=temporal)
+
+        dx = _get_series(block, "dx").astype(float, copy=False)
+        dy = _get_series(block, "dy").astype(float, copy=False)
+
+        if isinstance(block.get("r"), np.ndarray):
+            r = _get_series(block, "r").astype(float, copy=False)
+
+        if isinstance(block.get("std_dx"), np.ndarray) or isinstance(block.get("dx_std"), np.ndarray):
+            std_dx = _get_series(block, "std_dx").astype(float, copy=False)
+        if isinstance(block.get("std_dy"), np.ndarray) or isinstance(block.get("dy_std"), np.ndarray):
+            std_dy = _get_series(block, "std_dy").astype(float, copy=False)
+        if isinstance(block.get("std_r"), np.ndarray) or isinstance(block.get("r_std"), np.ndarray):
+            std_r = _get_series(block, "std_r").astype(float, copy=False)
+
+    else:
+        if xarr is None or yarr is None:
+            raise ValueError("Both 'xarr' and 'yarr' must be provided together.")
+
+        if temporal != "abs":
+            raise ValueError("When using 'xarr' and 'yarr', temporal must be 'abs'.")
+
+        if uncertainty != "none":
+            raise ValueError("When using 'xarr' and 'yarr', uncertainty must be 'none'.")
+
+        dx = np.asarray(xarr, dtype=float).ravel()
+        dy = np.asarray(yarr, dtype=float).ravel()
+
+        include_r = True
+        r = np.sqrt(dx**2 + dy**2)
 
     n = dx.size
     if dy.size != n:
@@ -190,18 +230,18 @@ def plt_displacement(
         raise ValueError(f"std_r must match dx length; got {std_r.size} vs {n}")
 
     m = np.ones(n, dtype=bool)
-    drop_nan = True
-    if drop_nan:
-        m &= np.isfinite(dx) & np.isfinite(dy)
-        if kind == "timeseries" and include_r and r is not None:
-            m &= np.isfinite(r)
-        if kind == "timeseries" and uncertainty != "none":
-            if std_dx is not None:
-                m &= np.isfinite(std_dx)
-            if std_dy is not None:
-                m &= np.isfinite(std_dy)
-            if include_r and r is not None and std_r is not None:
-                m &= np.isfinite(std_r)
+    m &= np.isfinite(dx) & np.isfinite(dy)
+
+    if kind == "timeseries" and include_r and r is not None:
+        m &= np.isfinite(r)
+
+    if kind == "timeseries" and uncertainty != "none":
+        if std_dx is not None:
+            m &= np.isfinite(std_dx)
+        if std_dy is not None:
+            m &= np.isfinite(std_dy)
+        if include_r and r is not None and std_r is not None:
+            m &= np.isfinite(std_r)
 
     dxp = dx[m]
     dyp = dy[m]
@@ -220,7 +260,16 @@ def plt_displacement(
         if show_path:
             ax.plot(dxp, dyp, linewidth=1.0, color="black")
 
-        sc = ax.scatter(dxp, dyp, c=t, cmap=cmap, s=25, zorder=3, edgecolors="black", linewidths=0.5)
+        sc = ax.scatter(
+            dxp,
+            dyp,
+            c=t,
+            cmap=cmap,
+            s=35,
+            zorder=3,
+            edgecolors="black",
+            linewidths=0.5,
+        )
 
         ax.set_xlabel(f"dx ({unit_px})")
         ax.set_ylabel(f"dy ({unit_px})")
@@ -232,11 +281,10 @@ def plt_displacement(
 
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="4%", pad=0.08)
-        cbar = fig.colorbar(sc, cax=cax)
-        cbar.set_label("(frame)")
+        fig.colorbar(sc, cax=cax)
 
         ax.grid(True, alpha=0.3)
-        return fig, ax, sc
+        return fig
 
     if kind != "timeseries":
         raise ValueError(f"unknown kind={kind!r}")
@@ -251,9 +299,33 @@ def plt_displacement(
 
     colors = ["darkred", "olive", "steelblue"]
 
-    _plot_timeseries(axes[0], t, dxp, color=colors[0], ylabel=f"dx ({unit_px})", uncertainty=uncertainty, ystd=sdxp)
-    _plot_timeseries(axes[1], t, dyp, color=colors[1], ylabel=f"dy ({unit_px})", uncertainty=uncertainty, ystd=sdyp)
-    _plot_timeseries(axes[2], t, rp,  color=colors[2], ylabel=f"r ({unit_px})",  uncertainty=uncertainty, ystd=sdrp)
+    _plot_timeseries(
+        axes[0],
+        t,
+        dxp,
+        color=colors[0],
+        ylabel=f"dx ({unit_px})",
+        uncertainty=uncertainty,
+        ystd=sdxp,
+    )
+    _plot_timeseries(
+        axes[1],
+        t,
+        dyp,
+        color=colors[1],
+        ylabel=f"dy ({unit_px})",
+        uncertainty=uncertainty,
+        ystd=sdyp,
+    )
+    _plot_timeseries(
+        axes[2],
+        t,
+        rp,
+        color=colors[2],
+        ylabel=f"r ({unit_px})",
+        uncertainty=uncertainty,
+        ystd=sdrp,
+    )
 
     axes[-1].set_xlabel("(frame)")
 
@@ -263,8 +335,7 @@ def plt_displacement(
         fig.suptitle(title, fontsize=15 * k)
 
     fig.tight_layout()
-    return fig, axes, None
-
+    return fig
 
 def plt_stack_metric(
     stack_stats: dict,
@@ -277,7 +348,7 @@ def plt_stack_metric(
     markers: Sequence[str] | None = None,
     k: float = 1.0,
     title: str | None = None,
-) -> tuple[Figure, Axes, None]:
+) -> Figure:
     """
     Plot a single metric as a time series from ``XXX_stack_stats`` output.
 
@@ -288,6 +359,13 @@ def plt_stack_metric(
         stack_stats["tiles"][group][metric]["mean"] -> (T, 3, 3)
         stack_stats["tiles"][group][metric]["std"]  -> (T, 3, 3)
       using distinct colors and markers, and per-frame std.
+    - scope="both": same as "tiles", plus a 10th curve from the full image
+      plotted in black with a filled-circle marker and no uncertainty.
+
+    Returns
+    -------
+    fig : Figure
+        Matplotlib figure handle.
     """
     start_plotting(k)
 
@@ -315,25 +393,27 @@ def plt_stack_metric(
         metric_with_unit = metric
         ylabel = metric
 
-    nrows = 1
     fig_h = 3.0
     fig_w = 9.0
-
-    fig, ax = plt.subplots(nrows=nrows, ncols=1, sharex=True, figsize=(fig_w, fig_h))
+    fig, ax = plt.subplots(nrows=1, ncols=1, sharex=True, figsize=(fig_w, fig_h))
 
     if title is None:
         if scope == "full":
             tlt = "from full image"
-        else:
+        elif scope == "tiles":
             tlt = "from tiled image"
-
+        elif scope == "both":
+            tlt = "from tiled + full image"
+        else:
+            raise ValueError(f"unknown scope={scope!r}")
         title = f"{metric} {tlt}"
+
     ax.set_title(title, fontsize=15 * k)
     ax.set_xlabel("(frame)")
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.3)
 
-    if scope == "full":
+    def _get_full_series() -> tuple[np.ndarray, np.ndarray]:
         full = stack_stats.get("full")
         if not isinstance(full, dict):
             raise ValueError("stack_stats must contain dict key 'full'")
@@ -346,12 +426,51 @@ def plt_stack_metric(
         if not isinstance(y, np.ndarray):
             raise ValueError(f"Expected full[{group!r}][{metric!r}] as numpy array; got {type(y)}")
         if y.ndim != 1:
-            raise ValueError(f"Expected 1D time series for full[{group!r}][{metric!r}]; got shape={y.shape!r}")
+            raise ValueError(
+                f"Expected 1D time series for full[{group!r}][{metric!r}]; got shape={y.shape!r}"
+            )
 
         t = np.arange(y.size, dtype=float)
         m = np.isfinite(y)
-        yp = y[m]
-        tp = t[m]
+        return t[m], y[m]
+
+    def _get_tiles_series() -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray]:
+        tiles = stack_stats.get("tiles")
+        if not isinstance(tiles, dict):
+            raise ValueError("stack_stats must contain dict key 'tiles' for scope='tiles'/'both'")
+
+        group_block = tiles.get(group)
+        if not isinstance(group_block, dict):
+            raise KeyError(f"tiles has no group {group!r}")
+
+        metric_block = group_block.get(metric)
+        if not isinstance(metric_block, dict):
+            raise KeyError(f"tiles[{group!r}] has no metric {metric!r}")
+
+        mean = metric_block.get("mean")
+        std = metric_block.get("std")
+
+        if not isinstance(mean, np.ndarray) or mean.ndim != 3 or mean.shape[1:] != (3, 3):
+            raise ValueError(
+                f"Expected tiles[{group!r}][{metric!r}]['mean'] with shape (T,3,3); "
+                f"got {type(mean)} shape={getattr(mean, 'shape', None)!r}"
+            )
+
+        if uncertainty != "none":
+            if not isinstance(std, np.ndarray) or std.ndim != 3 or std.shape != mean.shape:
+                raise ValueError(
+                    f"Expected tiles[{group!r}][{metric!r}]['std'] with shape {mean.shape!r}; "
+                    f"got {type(std)} shape={getattr(std, 'shape', None)!r}"
+                )
+        else:
+            std = None
+
+        t_all = np.arange(mean.shape[0], dtype=float)
+        labels = _default_tile_labels(meta)
+        return t_all, mean, std, labels
+
+    if scope == "full":
+        tp, yp = _get_full_series()
 
         ystd: float | None
         if uncertainty == "none":
@@ -370,45 +489,19 @@ def plt_stack_metric(
             marker="o",
             markersize=3.0,
         )
-        xmin, xmax = ax.get_xlim()
-        tmax = tp[-1]
-        ax.set_xlim(xmin, 1.18 * tmax)
-        return fig, ax, None
 
-    if scope != "tiles":
+        if tp.size > 1:
+            xmin, xmax = ax.get_xlim()
+            tmax = tp[-1]
+            ax.set_xlim(xmin, 1.18 * tmax)
+
+        return fig
+
+    if scope not in ("tiles", "both"):
         raise ValueError(f"unknown scope={scope!r}")
 
-    tiles = stack_stats.get("tiles")
-    if not isinstance(tiles, dict):
-        raise ValueError("stack_stats must contain dict key 'tiles' for scope='tiles'")
-
-    group_block = tiles.get(group)
-    if not isinstance(group_block, dict):
-        raise KeyError(f"tiles has no group {group!r}")
-
-    metric_block = group_block.get(metric)
-    if not isinstance(metric_block, dict):
-        raise KeyError(f"tiles[{group!r}] has no metric {metric!r}")
-
-    mean = metric_block.get("mean")
-    std = metric_block.get("std")
-
-    if not isinstance(mean, np.ndarray) or mean.ndim != 3 or mean.shape[1:] != (3, 3):
-        raise ValueError(
-            f"Expected tiles[{group!r}][{metric!r}]['mean'] with shape (T,3,3); "
-            f"got {type(mean)} shape={getattr(mean, 'shape', None)!r}"
-        )
-    if uncertainty != "none":
-        if not isinstance(std, np.ndarray) or std.ndim != 3 or std.shape != mean.shape:
-            raise ValueError(
-                f"Expected tiles[{group!r}][{metric!r}]['std'] with shape {mean.shape!r}; "
-                f"got {type(std)} shape={getattr(std, 'shape', None)!r}"
-            )
-
-    labels = _default_tile_labels(meta)
-
+    t_all, mean, std, labels = _get_tiles_series()
     T = int(mean.shape[0])
-    t_all = np.arange(T, dtype=float)
 
     if markers is None:
         markers = ("o", "s", "^", "v", "D", "P", "X", "<", ">")
@@ -423,7 +516,7 @@ def plt_stack_metric(
         for ix in range(3):
             y = mean[:, iy, ix].astype(float, copy=False)
             ystd_arr = None
-            if uncertainty != "none":
+            if std is not None:
                 ystd_arr = std[:, iy, ix].astype(float, copy=False)
 
             m = np.isfinite(y)
@@ -433,6 +526,7 @@ def plt_stack_metric(
             if not np.any(m):
                 idx += 1
                 continue
+
             _plot_timeseries(
                 ax,
                 t_all[m],
@@ -446,9 +540,42 @@ def plt_stack_metric(
                 markersize=3.0,
             )
             idx += 1
+
+    if scope == "both":
+        tp, yp = _get_full_series()
+
+        _plot_timeseries(
+            ax,
+            tp,
+            yp,
+            color="black",
+            ylabel=ylabel,
+            label="full",
+            uncertainty="none",
+            ystd=None,
+            marker="x",
+            markersize=4.0,
+        )
+
+        # ax.plot(
+        #     tp,
+        #     yp,
+        #     linewidth=1.0,
+        #     linestyle="-",
+        #     color="black",
+        #     marker="o",
+        #     markersize=3.0,
+        #     markerfacecolor="white",
+        #     markeredgecolor="black",
+        #     markeredgewidth=1.1,
+        #     label="full",
+        #     zorder=5,
+        # )
+
     if T > 1:
         xmin, xmax = ax.get_xlim()
         tmax = t_all[-1]
         ax.set_xlim(xmin, 1.18 * tmax)
+
     ax.legend(loc="center right", fontsize=9 * k, framealpha=0.85)
-    return fig, ax, None
+    return fig

@@ -139,7 +139,7 @@ def read_image(
             n_img, h, w = data.shape
 
         mem_gb = data.nbytes / (1024 ** 3)
-        print(f"> {n_img} image(s) found ({h} x {w}), {mem_gb:.2f} Gb in memory")
+        print(f"> {n_img} image(s) ({h} x {w}), {mem_gb:.2f} Gb in memory")
         elapsed_time(t0)
 
     return data

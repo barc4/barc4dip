@@ -52,3 +52,23 @@ def to_uint16(data: np.ndarray, *, median_size: int = 3, counts_threshold: float
 
     return x.astype(np.uint16, copy=False)
 
+
+def round_uint16_bounds(vmin: float, vmax: float, k:float=1000) -> tuple[int, int]:
+    """
+    Round bounds to nearest thousands:
+    - vmin floored to lower k
+    - vmax ceiled to higher k
+    - clipped to [0, 65535]
+
+    Returns
+    -------
+    tuple[int, int]
+        (vmin_rounded, vmax_rounded)
+    """
+    vmin_r = int(np.floor(vmin / k) * k)
+    vmax_r = int(np.ceil(vmax / k) * k)
+
+    vmin_r = max(0, vmin_r)
+    vmax_r = min(65535, vmax_r)
+
+    return vmin_r, vmax_r

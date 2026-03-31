@@ -18,6 +18,7 @@ from typing import Literal, Sequence
 import numpy as np
 from scipy import ndimage
 
+from ..geometry.masks import pad_to_square
 from ..maths.radial import radial_mean_interpolated
 from ..maths.stats import distance_at_fraction_from_peak, width_at_fraction
 from ..signal.corr import autocorr2d
@@ -26,10 +27,10 @@ from ..utils import elapsed_time, now, progress_done, progress_update
 from .common import (
     apply_display_origin,
     choose_tiling_mode,
+    normalize_groups,
+    stack_time_series,
     tiled_scalar_fields,
     tiles_meta,
-    stack_time_series,
-    normalize_groups,
 )
 from .statistics import distribution_moments
 
@@ -586,7 +587,9 @@ def spectral_entropy(
     if not np.all(np.isfinite(data)):
         raise ValueError("spectral_entropy requires all values to be finite.")
 
+    x = pad_to_square(data, fill_value=np.mean(data))
     x = np.asarray(data, dtype=float)
+
     if remove_mean:
         x = x - float(np.mean(x))
 
@@ -679,6 +682,8 @@ def inverse_autocorr_width(
             f"(min dimension < {int(min_size_px)})."
         )
 
+    data = pad_to_square(data, fill_value=np.mean(data))
+
     ac, _xlag, _ylag = autocorr2d(
         data,
         dx=1.0,
@@ -687,17 +692,6 @@ def inverse_autocorr_width(
         standardize=True,
         normalize="peak",
     )
-
-    ac = np.asarray(ac)
-    if np.iscomplexobj(ac):
-        imag_max = float(np.max(np.abs(ac.imag)))
-        real_max = float(np.max(np.abs(ac.real)))
-        if imag_max > 1e-10 * max(real_max, 1.0):
-            raise ValueError(
-                f"autocorr2d returned significant imaginary part "
-                f"(max|Im|={imag_max:.3e}, max|Re|={real_max:.3e})."
-            )
-        ac = ac.real
 
     iy, ix = np.unravel_index(int(np.argmax(ac)), ac.shape)
 

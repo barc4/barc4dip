@@ -3,6 +3,6 @@
 
 from __future__ import annotations
 
-from . import crop, roi
+from . import crop, masks, roi
 
-__all__ = ["crop", "roi"]
+__all__ = ["crop", "mask", "roi"]

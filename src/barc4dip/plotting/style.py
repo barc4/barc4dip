@@ -12,6 +12,7 @@ from typing import Tuple
 import matplotlib.pyplot as plt
 from matplotlib import cm, rcParamsDefault
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.figure import Figure
 
 # ---------------------------------------------------------------------------
 # General style
@@ -70,8 +71,17 @@ scan_colors = [
 scan_cmap = LinearSegmentedColormap.from_list("scan", scan_colors)
 
 # ---------------------------------------------------------------------------
-# Thin wrapper to plt.show()
+# Thin wrappers to pyplot
 # ---------------------------------------------------------------------------
 
 def show():
     plt.show()
+
+def savefig(fig: Figure, file_name: str, *, dpi: int | None = None) -> None:
+    fig.savefig(file_name, dpi=dpi, bbox_inches="tight")
+
+def close(fig: Figure | None = None) -> None:
+    if fig is None:
+        plt.close()
+    else:
+        plt.close(fig)

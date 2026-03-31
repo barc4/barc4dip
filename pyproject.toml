@@ -23,7 +23,9 @@ dependencies = [
     "pillow",
     "matplotlib",
     "h5py",
-    "opencv-python-headless"
+    "opencv-python-headless",
+    "joblib",
+    "scikit-image",
 ]
 [project.optional-dependencies]
 examples = [

@@ -11,6 +11,7 @@ from typing import Literal, Sequence
 
 import numpy as np
 
+from ..geometry.masks import pad_to_square
 from ..geometry.roi import odd_size, roi_grid_3x3, roi_slices
 from ..maths.radial import radial_mean_binned, radial_mean_interpolated
 from ..maths.stats import distance_at_fraction_from_peak, width_at_fraction
@@ -532,6 +533,7 @@ def grain(
     if min(data.shape) < 128:
         raise ValueError("image too small for speckle grain metrics (min dimension < 128).")
 
+    data = pad_to_square(data, fill_value=np.mean(data))
     ac, xlag, ylag = autocorr2d(
         data,
         dx=1.0,
@@ -540,17 +542,6 @@ def grain(
         standardize=False,
         normalize="peak",
     )
-
-    ac = np.asarray(ac)
-    if np.iscomplexobj(ac):
-        imag_max = float(np.max(np.abs(ac.imag)))
-        real_max = float(np.max(np.abs(ac.real)))
-        if imag_max > 1e-10 * max(real_max, 1.0):
-            raise ValueError(
-                f"autocorr2d returned significant imaginary part "
-                f"(max|Im|={imag_max:.3e}, max|Re|={real_max:.3e})."
-            )
-        ac = ac.real
 
     iy, ix = np.unravel_index(int(np.argmax(ac)), ac.shape)
 
@@ -749,6 +740,8 @@ def bandwidth(image: np.ndarray, verbose: bool = False) -> dict[str, float]:
     img = np.asarray(image, dtype=float)
     if img.ndim != 2:
         raise ValueError("image must be a 2D array.")
+
+    img = pad_to_square(img, fill_value=np.mean(img))
 
     mu = float(np.nanmean(img))
     if not np.isfinite(mu):

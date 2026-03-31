@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "barc4dip"
-version = "2025.01.09"
+version = "2026.03.31"
 description= "A Python package for digital image processing"
 readme = "README.md"
 license = "CECILL-2.1"

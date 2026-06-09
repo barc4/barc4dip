@@ -344,14 +344,11 @@ def speckle_stack_stats(
 
     grid_slices, grid_labels = roi_grid_3x3((H, W), roi_size_yx, step_yx, center_yx=None)
 
-    def _track_one_time_step(t: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def _track_one_time_step(t: int) -> tuple[np.ndarray, np.ndarray]:
         img_t = stack[t, :, :]
-        img_prev = stack[t - 1, :, :] if t > 0 else stack[0, :, :]
 
         dx_abs_3x3 = np.empty((3, 3), dtype=np.float32)
         dy_abs_3x3 = np.empty((3, 3), dtype=np.float32)
-        dx_inc_3x3 = np.empty((3, 3), dtype=np.float32)
-        dy_inc_3x3 = np.empty((3, 3), dtype=np.float32)
 
         for iy in range(3):
             for ix in range(3):
@@ -370,37 +367,20 @@ def speckle_stack_stats(
                 dy_abs_3x3[iy, ix] = dy_a
                 dx_abs_3x3[iy, ix] = dx_a
 
-                tpl_inc = img_prev[sy, sx]
-                dy_i, dx_i, _, _ = track_translation(
-                    tpl_inc,
-                    img_t,
-                    slices_yx=(sy, sx),
-                    method=tracking_method,
-                    backend=tracking_backend,
-                    subpixel=subpixel,
-                    eps=1e-9,
-                )
-                dy_inc_3x3[iy, ix] = dy_i
-                dx_inc_3x3[iy, ix] = dx_i
-
-        return dx_abs_3x3, dy_abs_3x3, dx_inc_3x3, dy_inc_3x3
+        return dx_abs_3x3, dy_abs_3x3
 
     if serial_mode:
         dx_abs_tiles = np.empty((T, 3, 3), dtype=np.float32)
         dy_abs_tiles = np.empty((T, 3, 3), dtype=np.float32)
-        dx_inc_tiles = np.empty((T, 3, 3), dtype=np.float32)
-        dy_inc_tiles = np.empty((T, 3, 3), dtype=np.float32)
 
         last = -1
         for t in range(T):
             if verbose:
                 last = progress_update("Speckle stability loop", t, T, last)
 
-            dx_a, dy_a, dx_i, dy_i = _track_one_time_step(t)
+            dx_a, dy_a = _track_one_time_step(t)
             dx_abs_tiles[t, :, :] = dx_a
             dy_abs_tiles[t, :, :] = dy_a
-            dx_inc_tiles[t, :, :] = dx_i
-            dy_inc_tiles[t, :, :] = dy_i
 
         if verbose:
             progress_done("Speckle stability loop")
@@ -411,8 +391,14 @@ def speckle_stack_stats(
         )
         dx_abs_tiles = np.stack([r[0] for r in results], axis=0)
         dy_abs_tiles = np.stack([r[1] for r in results], axis=0)
-        dx_inc_tiles = np.stack([r[2] for r in results], axis=0)
-        dy_inc_tiles = np.stack([r[3] for r in results], axis=0)
+
+    dx_inc_tiles = np.empty_like(dx_abs_tiles)
+    dy_inc_tiles = np.empty_like(dy_abs_tiles)
+
+    dx_inc_tiles[0, :, :] = 0.0
+    dy_inc_tiles[0, :, :] = 0.0
+    dx_inc_tiles[1:, :, :] = dx_abs_tiles[1:, :, :] - dx_abs_tiles[:-1, :, :]
+    dy_inc_tiles[1:, :, :] = dy_abs_tiles[1:, :, :] - dy_abs_tiles[:-1, :, :]
 
     # if display_origin == "lower":
     #     dy_abs_tiles = -dy_abs_tiles

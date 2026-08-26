@@ -22,7 +22,6 @@ def crop_to_square_center(array, constant=1.0):
     min_dim = min(array.shape)
     square_size = int(min_dim * constant)
     
-    # Ensure square_size is odd
     if square_size % 2 == 0:
         square_size -= 1
     

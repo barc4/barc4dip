@@ -98,8 +98,8 @@ def split_edges(length: int, n_parts: int) -> list[tuple[int, int]]:
     edges = np.linspace(0, length, n_parts + 1)
     out: list[tuple[int, int]] = []
     for i in range(n_parts):
-        a = int(round(float(edges[i])))
-        b = int(round(float(edges[i + 1])))
+        a = round(float(edges[i]))
+        b = round(float(edges[i + 1]))
         b = max(b, a + 1)
         out.append((a, b))
     out[-1] = (out[-1][0], length) 
@@ -217,34 +217,6 @@ def tiles_meta(
     return meta
 
 
-def nan_std_grid_3x3() -> np.ndarray:
-    """
-    Create a 3x3 float grid filled with NaNs (std placeholder).
-
-    Returns:
-        np.ndarray:
-            Array of shape (3, 3) with NaN values.
-    """
-    return np.full((3, 3), np.nan, dtype=float)
-
-
-def pack_mean_std(mean: np.ndarray, std: np.ndarray) -> dict:
-    """
-    Pack mean/std tile grids into the standard schema.
-
-    Parameters:
-        mean (np.ndarray):
-            Mean grid, shape (3, 3).
-        std (np.ndarray):
-            Std grid, shape (3, 3).
-
-    Returns:
-        dict:
-            {"mean": mean, "std": std}
-    """
-    return {"mean": np.asarray(mean, dtype=float), "std": np.asarray(std, dtype=float)}
-
-
 def aggregate_subtiles_9x9_to_3x3(sub: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
     Aggregate a 9x9 grid of subtile values into a 3x3 grid of mean and std.
@@ -341,9 +313,9 @@ def tiled_scalar_fields(
                 for k in grids.keys():
                     grids[k][r, c] = float(vals[k])
 
-        nan_std = nan_std_grid_3x3()
+        nan_std = np.full((3, 3), np.nan, dtype=float)
         for k, grid in grids.items():
-            out[k] = pack_mean_std(grid, nan_std)
+            out[k] = {"mean": np.asarray(grid, dtype=float), "std": np.asarray(nan_std, dtype=float)}
         return out
 
     if tile_mode == "subtiles_9x9":
@@ -372,7 +344,7 @@ def tiled_scalar_fields(
 
         for k, sub in subgrids.items():
             mean3, std3 = aggregate_subtiles_9x9_to_3x3(sub)
-            out[k] = pack_mean_std(mean3, std3)
+            out[k] = {"mean": np.asarray(mean3, dtype=float), "std": np.asarray(std3, dtype=float)}
         return out
 
     raise ValueError("tile_mode must be 'tiles_3x3' or 'subtiles_9x9'.")

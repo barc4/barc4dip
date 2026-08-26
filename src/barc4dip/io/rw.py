@@ -18,7 +18,6 @@ from pathlib import Path
 
 import numpy as np
 
-from ..utils import elapsed_time, now
 from .edf import read_edf
 from .h5 import read_h5, save_h5
 from .tiff import read_tiff, save_tiff
@@ -96,7 +95,7 @@ def read_image(
     Raises:
         TypeError, ValueError
     """
-    t0 = now()
+
     if isinstance(image_path, str):
         ext = _normalize_extension(file_extension) if file_extension else _infer_extension_from_path(image_path)
     elif isinstance(image_path, Sequence):
@@ -140,7 +139,6 @@ def read_image(
 
         mem_gb = data.nbytes / (1024 ** 3)
         print(f"> {n_img} image(s) ({h} x {w}), {mem_gb:.2f} Gb in memory")
-        elapsed_time(t0)
 
     return data
 

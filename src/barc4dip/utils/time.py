@@ -19,7 +19,9 @@ def now():
     """
     return time()
 
-def elapsed_time(t_start: float, verbose: bool = True) -> float:
+def elapsed_time(
+    t_start: float, verbose: bool = True, caller: str = "Total"
+) -> float:
     """
     Compute and optionally print the elapsed wall-clock time.
 
@@ -27,6 +29,8 @@ def elapsed_time(t_start: float, verbose: bool = True) -> float:
         t_start (float): Reference start time in seconds.
         verbose (bool): If True, print the formatted elapsed time. If False,
             only return the elapsed time. Default is True.
+        caller (str): Name of the calling function or operation displayed in
+            the timing message. Default is ``"Total"``.
 
     Returns:
         float: Elapsed time in seconds since t_start.
@@ -35,7 +39,7 @@ def elapsed_time(t_start: float, verbose: bool = True) -> float:
 
     if verbose:
         if delta_t < 1.0:
-            print(f">> Total elapsed time: {delta_t * 1000.0:.2f} ms")
+            print(f">> {caller} elapsed time: {delta_t * 1000.0:.2f} ms")
             return
 
         hours, rem = divmod(delta_t, 3600.0)
@@ -43,13 +47,16 @@ def elapsed_time(t_start: float, verbose: bool = True) -> float:
 
         if hours >= 1.0:
             print(
-                f">> Total elapsed time: "
+                f">> {caller} elapsed time: "
                 f"{int(hours)} h {int(minutes)} min {seconds:.2f} s"
             )
         elif minutes >= 1.0:
-            print(f">> Total elapsed time: {int(minutes)} min {seconds:.2f} s")
+            print(
+                f">> {caller} elapsed time: "
+                f"{int(minutes)} min {seconds:.2f} s"
+            )
         else:
-            print(f">> Total elapsed time: {seconds:.2f} s")
+            print(f">> {caller} elapsed time: {seconds:.2f} s")
 
     return delta_t
         

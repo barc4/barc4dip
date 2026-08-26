@@ -4,5 +4,6 @@
 from __future__ import annotations
 
 from . import crop, masks, roi
+from .masks import refine_mask, threshold_mask
 
-__all__ = ["crop", "mask", "roi"]
+__all__ = ["crop", "masks", "roi", "refine_mask", "threshold_mask"]
